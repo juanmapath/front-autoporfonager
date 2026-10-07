@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# Next.js build output
+.next/
+/out/
+
+# Production build output
+/build
+/dist
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment variables & secrets
+.env
+.env*.local
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+!.env.example
+*.pem
+*.key
+*.cert
+*.crt
+
+# Vercel & Turbopack
+.vercel/
+.turbo/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Testing / Coverage
+coverage/
+.nyc_output/
+
+# IDE & Editor artifacts
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*~
+
+# Operating System files
+.DS_Store
+*.pem
+Thumbs.db
+Desktop.ini
