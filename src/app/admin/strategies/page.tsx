@@ -350,6 +350,7 @@ export default function AdminStrategiesPage() {
                 <th className="p-4">Activo(s)</th>
                 <th className="p-4">Estrategias Asignadas</th>
                 <th className="p-4">Estado</th>
+                <th className="p-4">Señal Actual</th>
                 <th className="p-4 text-right">Acciones</th>
               </tr>
             </thead>
@@ -361,6 +362,7 @@ export default function AdminStrategiesPage() {
                 const signal = instruments.find((i: any) => i.role === "signal_source");
                 const configStrats = liveVer?.params?.strategies || [];
                 const verNum = liveVer?.version || 1;
+                const currentSignals = strat.current_signals || [];
 
                 return (
                   <tr key={strat.id} className="hover:bg-slate-50 transition-colors">
@@ -422,6 +424,58 @@ export default function AdminStrategiesPage() {
                         />
                         <span>{strat.is_active ? "ACTIVA" : "PAUSADA"}</span>
                       </span>
+                    </td>
+                    <td className="p-4">
+                      {currentSignals.length > 0 ? (
+                        <div className="space-y-1">
+                          {currentSignals.map((sig: any, sIdx: number) => {
+                            const isLong = sig.direction === "LONG";
+                            const isShort = sig.direction === "SHORT";
+                            const expPct = Math.round((sig.target_exposure || 0) * 100);
+
+                            return (
+                              <div key={sIdx} className="space-y-0.5">
+                                <span
+                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-bold border ${
+                                    isLong
+                                      ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                                      : isShort
+                                      ? "bg-red-50 text-red-700 border-red-300"
+                                      : "bg-slate-100 text-slate-600 border-slate-300"
+                                  }`}
+                                >
+                                  <span
+                                    className={`w-1.5 h-1.5 rounded-full ${
+                                      isLong
+                                        ? "bg-emerald-500 animate-pulse"
+                                        : isShort
+                                        ? "bg-red-500 animate-pulse"
+                                        : "bg-slate-400"
+                                    }`}
+                                  />
+                                  <span>
+                                    {sig.direction} {expPct}% ({sig.symbol})
+                                  </span>
+                                </span>
+                                {sig.as_of && (
+                                  <div className="text-[10px] text-slate-400 font-mono">
+                                    {new Date(sig.as_of).toLocaleDateString("es-CO", {
+                                      month: "short",
+                                      day: "numeric",
+                                    })}{" "}
+                                    {new Date(sig.as_of).toLocaleTimeString("es-CO", {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-400 italic">Sin cálculo</span>
+                      )}
                     </td>
                     <td className="p-4 text-right">
                       <div className="inline-flex items-center gap-1.5">
