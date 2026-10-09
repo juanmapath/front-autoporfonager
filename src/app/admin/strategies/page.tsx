@@ -48,7 +48,7 @@ export default function AdminStrategiesPage() {
   }, []);
 
   const loadStrategiesData = () => {
-    fetchApi("/ops/strategies").then((data) => {
+    fetchApi("/ops/strategies/").then((data) => {
       if (data) {
         setStrategies(data.strategies || []);
         setBotTypes(data.bot_types || {});

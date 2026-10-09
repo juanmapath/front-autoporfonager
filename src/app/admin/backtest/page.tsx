@@ -17,25 +17,21 @@ import {
   ArrowDownRight,
   Shield,
   Clock,
-  HelpCircle,
+  Plus,
+  Trash2,
+  Sliders,
+  RefreshCw,
   FileSpreadsheet,
+  Bot,
+  Zap,
+  Gauge,
+  HelpCircle,
 } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 
-interface StrategyItem {
-  id: number;
-  slug: string;
-  name: string;
-  family: string;
-  engine: string;
-  kind: string;
-  is_active: boolean;
-  live_version?: {
-    instruments?: Array<{
-      symbol: string;
-      role: string;
-    }>;
-  };
+interface StrategySlot {
+  strategy_name: string;
+  params: Record<string, number>;
 }
 
 interface Trade {
@@ -46,7 +42,21 @@ interface Trade {
   shares: number;
   pnl: number;
   pnl_pct: number;
+  leverage?: number;
+  entry_strategy?: string;
+  exit_strategy?: string;
   open?: boolean;
+}
+
+interface TradeMarker {
+  date: string;
+  type: "BUY" | "SELL";
+  price: number;
+  strategy: string;
+  leverage?: number;
+  pnl?: number;
+  pnl_pct?: number;
+  is_win?: boolean;
 }
 
 interface BacktestResponse {
@@ -79,17 +89,40 @@ interface BacktestResponse {
     benchmark_value: number;
   }>;
   trades?: Trade[];
+  trade_markers?: TradeMarker[];
+  applied_leverage?: {
+    base_leverage: number;
+    max_leverage: number;
+    use_dynamic_leverage: boolean;
+  };
 }
 
 export default function BacktestLabPage() {
-  const [strategies, setStrategies] = useState<StrategyItem[]>([]);
-  const [selectedStrategyId, setSelectedStrategyId] = useState<number | null>(null);
-  const [capital, setCapital] = useState<number>(100000);
-  const [leverage, setLeverage] = useState<number>(1.0);
-  const [selectedPreset, setSelectedPreset] = useState<string>("2Y");
+  // Catalog & DB data
+  const [dbStrategies, setDbStrategies] = useState<any[]>([]);
+  const [botTypesCatalog, setBotTypesCatalog] = useState<Record<string, any>>({});
+  const [strategiesCatalog, setStrategiesCatalog] = useState<Record<string, any>>({});
+  const [dataLoaded, setDataLoaded] = useState(false);
 
-  // Date range
+  // Configuration Mode: "db_bot" (Cargar de la BD) | "custom" (Diseñar Ad-Hoc)
+  const [mode, setMode] = useState<"db_bot" | "custom">("db_bot");
+  const [selectedBotId, setSelectedBotId] = useState<number | null>(null);
+
+  // Engine & Strategy Parameters
+  const [botType, setBotType] = useState<string>("one_strategy");
+  const [tradedSymbol, setTradedSymbol] = useState<string>("QQQ");
+  const [signalSymbol, setSignalSymbol] = useState<string>("TLT");
+  const [selectedStrats, setSelectedStrats] = useState<StrategySlot[]>([]);
+  const [capital, setCapital] = useState<number>(100000);
+
+  // Leverage Parameters
+  const [leverage, setLeverage] = useState<number>(1.0); // Base leverage
+  const [maxLeverage, setMaxLeverage] = useState<number>(2.0); // Max leverage
+  const [useDynamicLeverage, setUseDynamicLeverage] = useState<boolean>(true); // Dynamic Walk-Forward toggle
+
+  // Date Range State
   const todayStr = useMemo(() => new Date().toISOString().split("T")[0], []);
+  const [selectedPreset, setSelectedPreset] = useState<string>("2Y");
   const [startDate, setStartDate] = useState<string>(() => {
     const d = new Date();
     d.setFullYear(d.getFullYear() - 2);
@@ -97,9 +130,13 @@ export default function BacktestLabPage() {
   });
   const [endDate, setEndDate] = useState<string>(todayStr);
 
+  // Simulation execution state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BacktestResponse | null>(null);
+
+  // Chart UI state
+  const [showMarkers, setShowMarkers] = useState<boolean>(true);
   const [hoveredPoint, setHoveredPoint] = useState<{
     date: string;
     strategy_value: number;
@@ -107,28 +144,110 @@ export default function BacktestLabPage() {
     x: number;
     y: number;
   } | null>(null);
+  const [hoveredMarker, setHoveredMarker] = useState<any | null>(null);
 
-  // Load available strategies from API
+  // 1. Load system catalog and DB strategies
   useEffect(() => {
-    fetchApi("/ops/strategies")
+    fetchApi("/ops/strategies/")
       .then((data) => {
-        if (data && data.strategies && data.strategies.length > 0) {
-          setStrategies(data.strategies);
-          setSelectedStrategyId(data.strategies[0].id);
+        if (data) {
+          const strats = data.strategies || [];
+          const bTypes = data.bot_types || {};
+          const cat = data.strategies_catalog || {};
+
+          setDbStrategies(strats);
+          setBotTypesCatalog(bTypes);
+          setStrategiesCatalog(cat);
+          setDataLoaded(true);
+
+          if (strats.length > 0) {
+            setSelectedBotId(strats[0].id);
+            populateFormFromBot(strats[0], cat);
+          } else {
+            initDefaultCustomStrategy(cat);
+          }
         }
       })
       .catch((err) => {
-        console.error("Error loading strategies for backtest:", err);
+        console.error("Error cargando estrategias:", err);
       });
   }, []);
 
-  // Update date range based on preset selection
+  // Helper: Init default single strategy slot
+  const initDefaultCustomStrategy = (cat: Record<string, any>) => {
+    const keys = Object.keys(cat);
+    if (keys.length > 0) {
+      const firstKey = keys[0];
+      const def = cat[firstKey];
+      const defaultParams: Record<string, number> = {};
+      def?.parameters?.forEach((p: any) => {
+        defaultParams[p.name] = p.default;
+      });
+      setSelectedStrats([{ strategy_name: firstKey, params: defaultParams }]);
+    }
+  };
+
+  // Helper: Populate form when user selects an existing bot
+  const populateFormFromBot = (bot: any, cat: Record<string, any>) => {
+    if (!bot) return;
+    setBotType(bot.kind || "one_strategy");
+
+    const liveVer = bot.live_version;
+    const instruments = liveVer?.instruments || [];
+    const traded = instruments.find((i: any) => i.role === "traded");
+    const signal = instruments.find((i: any) => i.role === "signal_source");
+
+    setTradedSymbol(traded?.symbol || instruments[0]?.symbol || "QQQ");
+    setSignalSymbol(signal?.symbol || "TLT");
+
+    const params = liveVer?.params || {};
+    setLeverage(params.leverage || 1.0);
+    setMaxLeverage(params.max_leverage || params.leverage || 2.0);
+    setUseDynamicLeverage(params.use_regimes !== undefined ? params.use_regimes : true);
+
+    const configStrats = params.strategies || [];
+    if (configStrats.length > 0) {
+      const slots: StrategySlot[] = configStrats.map((cs: any) => {
+        const stratName = cs.strategy_name;
+        const def = cat[stratName];
+        const paramMap: Record<string, number> = {};
+        const paramArray = Array.isArray(cs.params) ? cs.params : [];
+
+        def?.parameters?.forEach((p: any, idx: number) => {
+          if (paramArray[idx] !== undefined) {
+            paramMap[p.name] = paramArray[idx];
+          } else {
+            paramMap[p.name] = p.default;
+          }
+        });
+        return {
+          strategy_name: stratName,
+          params: paramMap,
+        };
+      });
+      setSelectedStrats(slots);
+    } else {
+      initDefaultCustomStrategy(cat);
+    }
+  };
+
+  const handleSelectBot = (botId: number) => {
+    setSelectedBotId(botId);
+    const bot = dbStrategies.find((b) => b.id === botId);
+    if (bot) {
+      populateFormFromBot(bot, strategiesCatalog);
+    }
+  };
+
+  // Preset Date Selection
   const handlePresetChange = (preset: string) => {
     setSelectedPreset(preset);
     const end = new Date();
     const start = new Date();
 
-    if (preset === "6M") {
+    if (preset === "3M") {
+      start.setMonth(start.getMonth() - 3);
+    } else if (preset === "6M") {
       start.setMonth(start.getMonth() - 6);
     } else if (preset === "1Y") {
       start.setFullYear(start.getFullYear() - 1);
@@ -146,52 +265,102 @@ export default function BacktestLabPage() {
     setEndDate(end.toISOString().split("T")[0]);
   };
 
-  const selectedStrategy = useMemo(() => {
-    return strategies.find((s) => s.id === selectedStrategyId) || null;
-  }, [strategies, selectedStrategyId]);
+  // Manage Strategy Slots (Add, Remove, Change, Params)
+  const handleAddStrategySlot = () => {
+    const keys = Object.keys(strategiesCatalog);
+    if (keys.length === 0) return;
+    const key = keys[0];
+    const def = strategiesCatalog[key];
+    const defaultParams: Record<string, number> = {};
+    def?.parameters?.forEach((p: any) => {
+      defaultParams[p.name] = p.default;
+    });
+    setSelectedStrats((prev) => [...prev, { strategy_name: key, params: defaultParams }]);
+  };
 
-  const tradedSymbol = useMemo(() => {
-    if (!selectedStrategy?.live_version?.instruments) return "QQQ";
-    const traded = selectedStrategy.live_version.instruments.find(
-      (i) => i.role === "traded"
+  const handleRemoveStrategySlot = (idx: number) => {
+    setSelectedStrats((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleStrategyChange = (idx: number, newKey: string) => {
+    const def = strategiesCatalog[newKey];
+    const defaultParams: Record<string, number> = {};
+    def?.parameters?.forEach((p: any) => {
+      defaultParams[p.name] = p.default;
+    });
+    setSelectedStrats((prev) =>
+      prev.map((item, i) => (i === idx ? { strategy_name: newKey, params: defaultParams } : item))
     );
-    return traded ? traded.symbol : selectedStrategy.live_version.instruments[0]?.symbol || "QQQ";
-  }, [selectedStrategy]);
+  };
 
+  const handleParamChange = (idx: number, paramName: string, value: number) => {
+    setSelectedStrats((prev) =>
+      prev.map((item, i) =>
+        i === idx
+          ? { ...item, params: { ...item.params, [paramName]: value } }
+          : item
+      )
+    );
+  };
+
+  // Run Quantitative Simulation
   const handleRunBacktest = async () => {
-    if (!selectedStrategyId) return;
     setLoading(true);
     setError(null);
 
+    const formattedStrategies = selectedStrats.map((s) => {
+      const def = strategiesCatalog[s.strategy_name];
+      const paramList = (def?.parameters || []).map((p: any) => {
+        const val = s.params[p.name];
+        return val !== undefined ? Number(val) : Number(p.default);
+      });
+      return {
+        strategy_name: s.strategy_name,
+        params: paramList,
+      };
+    });
+
+    const payload: any = {
+      start_date: startDate,
+      end_date: endDate,
+      initial_capital: capital,
+      leverage: leverage,
+      max_leverage: maxLeverage,
+      use_dynamic_leverage: useDynamicLeverage,
+      bot_type: botType,
+      traded_symbol: tradedSymbol.trim().toUpperCase(),
+      signal_symbol: botType === "cross_asset" ? signalSymbol.trim().toUpperCase() : undefined,
+      strategies: formattedStrategies,
+    };
+
+    if (mode === "db_bot" && selectedBotId) {
+      payload.strategy_id = selectedBotId;
+    }
+
     try {
-      const res = await fetchApi("/ops/backtests", {
+      const res = await fetchApi("/ops/backtests/", {
         method: "POST",
-        body: JSON.stringify({
-          strategy_id: selectedStrategyId,
-          start_date: startDate,
-          end_date: endDate,
-          initial_capital: capital,
-          leverage: leverage,
-        }),
+        body: JSON.stringify(payload),
       });
 
-      if (res && res.metrics) {
+      if (res && res.metrics && res.equity_curve) {
         setResult(res);
       } else {
-        setError(res?.error || "Error al procesar el backtest con el servidor.");
+        const errMsg = res?.error || res?.detail || "No se pudo procesar la simulación de backtest.";
+        setError(errMsg);
       }
     } catch (e: any) {
-      setError(e.message || "Error al conectar con el motor de backtesting.");
+      setError(e.message || "Error al conectar con el servidor de backtesting.");
     } finally {
       setLoading(false);
     }
   };
 
-  // SVG Chart Dimensions & Calculations
+  // SVG Chart Geometry Calculations
   const chartData = result?.equity_curve || [];
-  const svgWidth = 800;
-  const svgHeight = 280;
-  const padding = { top: 20, right: 30, bottom: 40, left: 70 };
+  const svgWidth = 840;
+  const svgHeight = 310;
+  const padding = { top: 25, right: 35, bottom: 45, left: 75 };
 
   const { minVal, maxVal, pathBot, pathBenchmark, points } = useMemo(() => {
     if (!chartData || chartData.length < 2) {
@@ -201,7 +370,8 @@ export default function BacktestLabPage() {
     const allValues = chartData.flatMap((d) => [d.strategy_value, d.benchmark_value]);
     const minRaw = Math.min(...allValues);
     const maxRaw = Math.max(...allValues);
-    const margin = (maxRaw - minRaw) * 0.08 || 1000;
+    const span = maxRaw - minRaw || 1000;
+    const margin = span * 0.08;
     const minVal = Math.floor(minRaw - margin);
     const maxVal = Math.ceil(maxRaw + margin);
 
@@ -225,6 +395,47 @@ export default function BacktestLabPage() {
     return { minVal, maxVal, pathBot: pBot, pathBenchmark: pBench, points: pts };
   }, [chartData]);
 
+  // Interpolate precise (X, Y) coordinates for Trade Markers on the Strategy curve
+  const renderedMarkers = useMemo(() => {
+    if (!result?.trade_markers || !chartData || chartData.length < 2 || maxVal === minVal) {
+      return [];
+    }
+    const innerW = svgWidth - padding.left - padding.right;
+    const innerH = svgHeight - padding.top - padding.bottom;
+
+    const startTs = new Date(chartData[0].date).getTime();
+    const endTs = new Date(chartData[chartData.length - 1].date).getTime();
+    const totalDuration = endTs - startTs || 1;
+
+    return result.trade_markers.map((m, idx) => {
+      const mTs = new Date(m.date).getTime();
+      const clampedTs = Math.max(startTs, Math.min(endTs, mTs));
+      const ratio = (clampedTs - startTs) / totalDuration;
+      const x = padding.left + ratio * innerW;
+
+      // Find closest point in equity curve to align with bot value
+      let closestPt = chartData[0];
+      let minDiff = Infinity;
+      for (const pt of chartData) {
+        const diff = Math.abs(new Date(pt.date).getTime() - clampedTs);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestPt = pt;
+        }
+      }
+
+      const y = padding.top + innerH - ((closestPt.strategy_value - minVal) / (maxVal - minVal)) * innerH;
+
+      return {
+        ...m,
+        id: idx,
+        x,
+        y,
+        strategy_value: closestPt.strategy_value,
+      };
+    });
+  }, [result?.trade_markers, chartData, minVal, maxVal]);
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -235,60 +446,353 @@ export default function BacktestLabPage() {
               Laboratorio Cuantitativo de Backtesting
             </h1>
             <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-tech-blue-light text-tech-blue border border-tech-blue/20">
-              PROD-PARITY ENGINE
+              PROD-PARITY
             </span>
             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
               YAHOO FINANCE LIVE OHLCV
             </span>
           </div>
           <p className="text-xs text-slate-muted mt-1">
-            Simula el rendimiento histórico de cualquier bot de la base de datos contra el benchmark{" "}
-            <strong>Buy & Hold</strong> usando el <strong>mismo motor y catálogo de producción</strong>.
+            Simula cualquier bot o diseña estrategias ad-hoc con datos históricos reales contra el benchmark{" "}
+            <strong>Buy & Hold</strong> con apalancamiento dinámico y atribución multi-estrategia.
           </p>
+        </div>
+
+        {/* Mode Selector Tabs */}
+        <div className="flex bg-slate-canvas p-1 rounded-xl border border-slate-subtle self-start sm:self-auto">
+          <button
+            type="button"
+            onClick={() => setMode("db_bot")}
+            className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+              mode === "db_bot"
+                ? "bg-navy text-white shadow-sm"
+                : "text-slate-muted hover:text-navy hover:bg-white"
+            }`}
+          >
+            <Bot className="w-3.5 h-3.5" />
+            <span>Cargar Bot Guardado</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("custom")}
+            className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+              mode === "custom"
+                ? "bg-navy text-white shadow-sm"
+                : "text-slate-muted hover:text-navy hover:bg-white"
+            }`}
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            <span>Diseñar Estrategia Ad-Hoc</span>
+          </button>
         </div>
       </div>
 
-      {/* Control Form */}
-      <div className="bg-white border border-slate-subtle p-6 rounded-2xl shadow-card-subtle space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Bot Selector */}
+      {/* Control Configuration Panel */}
+      <div className="bg-white border border-slate-subtle p-6 rounded-2xl shadow-card-subtle space-y-5">
+        {/* Row 1: Bot Selection (if mode === db_bot) or Type (if custom) */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {mode === "db_bot" ? (
+            <div className="md:col-span-2">
+              <label className="text-xs text-navy font-bold block mb-1.5 flex items-center justify-between">
+                <span>Seleccionar Bot de la Base de Datos ({dbStrategies.length} disponibles)</span>
+                {selectedBotId && (
+                  <span className="text-[10px] text-tech-blue font-semibold">
+                    {dbStrategies.find((b) => b.id === selectedBotId)?.family}
+                  </span>
+                )}
+              </label>
+              <select
+                value={selectedBotId || ""}
+                onChange={(e) => handleSelectBot(Number(e.target.value))}
+                className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-3 text-xs font-semibold focus:outline-none focus:border-tech-blue focus:ring-2 focus:ring-tech-blue/10"
+              >
+                {dbStrategies.map((strat) => {
+                  const sym =
+                    strat.live_version?.instruments?.find((i: any) => i.role === "traded")?.symbol ||
+                    "ASSET";
+                  return (
+                    <option key={strat.id} value={strat.id}>
+                      {strat.name} ({sym}) — {strat.kind} [{strat.is_active ? "ACTIVO" : "PAUSADO"}]
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          ) : (
+            <div className="md:col-span-2">
+              <label className="text-xs text-navy font-bold block mb-1.5">
+                Tipo de Arquitectura de Bot
+              </label>
+              <select
+                value={botType}
+                onChange={(e) => setBotType(e.target.value)}
+                className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-3 text-xs font-semibold focus:outline-none focus:border-tech-blue focus:ring-2 focus:ring-tech-blue/10"
+              >
+                {Object.keys(botTypesCatalog).map((key) => {
+                  const item = botTypesCatalog[key];
+                  return (
+                    <option key={key} value={key}>
+                      {item.name} — {item.description}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          )}
+
+          {/* Capital */}
           <div>
-            <label className="text-xs text-navy font-bold block mb-1.5 flex items-center justify-between">
-              <span>Bot / Estrategia Cuantitativa</span>
-              {selectedStrategy && (
-                <span className="text-[10px] text-tech-blue font-semibold uppercase">
-                  {selectedStrategy.family}
-                </span>
-              )}
-            </label>
-            <select
-              value={selectedStrategyId || ""}
-              onChange={(e) => setSelectedStrategyId(Number(e.target.value))}
-              className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-3 text-xs font-semibold focus:outline-none focus:border-tech-blue focus:ring-2 focus:ring-tech-blue/10"
-            >
-              {strategies.map((strat) => {
-                const sym =
-                  strat.live_version?.instruments?.find((i) => i.role === "traded")?.symbol ||
-                  "ASSET";
-                return (
-                  <option key={strat.id} value={strat.id}>
-                    {strat.name} ({sym}) — {strat.kind}
-                  </option>
-                );
-              })}
-            </select>
+            <label className="text-xs text-navy font-bold block mb-1.5">Capital Inicial ($ USD)</label>
+            <input
+              type="number"
+              value={capital}
+              onChange={(e) => setCapital(parseFloat(e.target.value) || 0)}
+              className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-3 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
+            />
+          </div>
+        </div>
+
+        {/* Row 2: Leverage Configuration (Base, Max, Dynamic Walk-Forward Toggle) */}
+        <div className="bg-slate-canvas/80 p-4 rounded-xl border border-slate-subtle space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-subtle pb-2">
+            <span className="text-xs font-bold text-navy flex items-center gap-1.5">
+              <Gauge className="w-3.5 h-3.5 text-tech-blue" />
+              <span>Gestión de Apalancamiento y Regímenes de Riesgo</span>
+            </span>
+            <span className="text-[10px] text-slate-muted">Walk-Forward Kelly / Profit Factor</span>
           </div>
 
-          {/* Preset Timeframe */}
-          <div>
-            <label className="text-xs text-navy font-bold block mb-1.5">Horizonte Temporal</label>
-            <div className="grid grid-cols-6 gap-1 bg-slate-canvas p-1 rounded-xl border border-slate-subtle">
-              {["6M", "1Y", "2Y", "3Y", "5Y", "YTD"].map((p) => (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-center">
+            {/* Base Leverage */}
+            <div>
+              <label className="text-[11px] font-bold text-navy block mb-1">
+                Apalancamiento Base
+              </label>
+              <select
+                value={leverage}
+                onChange={(e) => setLeverage(parseFloat(e.target.value))}
+                className="w-full bg-white border border-slate-subtle text-navy font-bold text-xs rounded-xl p-2.5 focus:outline-none focus:border-tech-blue"
+              >
+                <option value={1.0}>1.0x (Spot sin deuda)</option>
+                <option value={1.25}>1.25x</option>
+                <option value={1.5}>1.5x (Margen moderado)</option>
+                <option value={2.0}>2.0x (Margen 2x)</option>
+                <option value={3.0}>3.0x (Apalancamiento alto)</option>
+              </select>
+            </div>
+
+            {/* Max Leverage */}
+            <div>
+              <label className="text-[11px] font-bold text-navy block mb-1">
+                Apalancamiento Máximo (Techo)
+              </label>
+              <select
+                value={maxLeverage}
+                onChange={(e) => setMaxLeverage(parseFloat(e.target.value))}
+                className="w-full bg-white border border-slate-subtle text-navy font-bold text-xs rounded-xl p-2.5 focus:outline-none focus:border-tech-blue"
+              >
+                <option value={1.0}>1.0x (Sin techo extra)</option>
+                <option value={1.5}>1.5x</option>
+                <option value={2.0}>2.0x</option>
+                <option value={2.5}>2.5x</option>
+                <option value={3.0}>3.0x</option>
+                <option value={4.0}>4.0x</option>
+              </select>
+            </div>
+
+            {/* Dynamic Leverage Toggle */}
+            <div className="bg-white p-3 rounded-xl border border-slate-subtle/90 flex items-center justify-between gap-3">
+              <div>
+                <label className="text-[11px] font-bold text-navy block">
+                  Apalancamiento Dinámico
+                </label>
+                <p className="text-[10px] text-slate-muted leading-tight mt-0.5">
+                  Escala hacia el techo si Profit Factor ≥ 1.5, y reduce a 1.0x en drawdowns.
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={useDynamicLeverage}
+                onChange={(e) => setUseDynamicLeverage(e.target.checked)}
+                className="w-5 h-5 accent-tech-blue rounded cursor-pointer"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Row 3: Free Ticker Input & Popular Tickers Chips */}
+        <div className="bg-slate-canvas/60 p-4 rounded-xl border border-slate-subtle space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs text-navy font-bold block mb-1">
+                Activo Negociado (Cualquier Ticker de Yahoo Finance)
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={tradedSymbol}
+                  onChange={(e) => setTradedSymbol(e.target.value.toUpperCase())}
+                  placeholder="Ej. QQQ, SPY, NVDA, AAPL, TQQQ, BTC-USD"
+                  className="flex-1 bg-white border border-slate-subtle text-navy font-mono font-bold text-xs rounded-xl px-3 py-2.5 uppercase focus:outline-none focus:border-tech-blue focus:ring-2 focus:ring-tech-blue/10"
+                />
+              </div>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                <span className="text-[10px] text-slate-muted font-bold mr-1 self-center">Populares:</span>
+                {["QQQ", "SPY", "TQQQ", "NVDA", "AAPL", "MSFT", "TLT", "SOXL", "BTC-USD"].map((chip) => (
+                  <button
+                    key={chip}
+                    type="button"
+                    onClick={() => setTradedSymbol(chip)}
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold transition-colors ${
+                      tradedSymbol === chip
+                        ? "bg-navy text-white"
+                        : "bg-white border border-slate-subtle text-slate-600 hover:bg-slate-100"
+                    }`}
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {botType === "cross_asset" && (
+              <div>
+                <label className="text-xs text-navy font-bold block mb-1">
+                  Activo Fuente de Señal (Signal Asset)
+                </label>
+                <input
+                  type="text"
+                  value={signalSymbol}
+                  onChange={(e) => setSignalSymbol(e.target.value.toUpperCase())}
+                  placeholder="Ej. TLT, ^VIX, QQQ"
+                  className="w-full bg-white border border-slate-subtle text-navy font-mono font-bold text-xs rounded-xl px-3 py-2.5 uppercase focus:outline-none focus:border-tech-blue focus:ring-2 focus:ring-tech-blue/10"
+                />
+                <p className="text-[10px] text-slate-muted mt-1">
+                  El bot evaluará los indicadores sobre este activo y comprará/venderá <strong>{tradedSymbol}</strong>.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Row 4: Quantitative Strategies & Parameters Configurator */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-subtle pb-2">
+            <div>
+              <h3 className="text-xs font-bold text-navy flex items-center gap-1.5">
+                <Sliders className="w-3.5 h-3.5 text-tech-blue" />
+                <span>Configuración de Estrategia(s) e Indicadores</span>
+              </h3>
+              <p className="text-[11px] text-slate-muted">
+                {botType === "multi_strategy"
+                  ? "Las señales de las estrategias seleccionadas se combinan mediante unión lógica OR con gestión de estados y atribución granular."
+                  : "Parámetros cuantitativos del modelo matemático."}
+              </p>
+            </div>
+
+            {botType === "multi_strategy" && (
+              <button
+                type="button"
+                onClick={handleAddStrategySlot}
+                className="flex items-center gap-1 text-[11px] font-bold text-tech-blue bg-tech-blue-light hover:bg-tech-blue hover:text-white px-3 py-1.5 rounded-lg transition-colors border border-tech-blue/20"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Añadir Estrategia</span>
+              </button>
+            )}
+          </div>
+
+          <div className="space-y-3">
+            {selectedStrats.map((slot, idx) => {
+              const def = strategiesCatalog[slot.strategy_name];
+              return (
+                <div
+                  key={idx}
+                  className="bg-slate-canvas border border-slate-subtle p-4 rounded-xl space-y-3 relative group"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 flex-1">
+                      <span className="w-5 h-5 rounded-full bg-navy text-white text-[10px] font-bold flex items-center justify-center">
+                        {idx + 1}
+                      </span>
+                      <select
+                        value={slot.strategy_name}
+                        onChange={(e) => handleStrategyChange(idx, e.target.value)}
+                        className="bg-white border border-slate-subtle text-navy font-bold text-xs rounded-lg px-3 py-2 flex-1 max-w-md focus:outline-none focus:border-tech-blue"
+                      >
+                        {Object.keys(strategiesCatalog).map((catKey) => {
+                          const catItem = strategiesCatalog[catKey];
+                          return (
+                            <option key={catKey} value={catKey}>
+                              {catItem.name} ({catItem.category})
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+
+                    {botType === "multi_strategy" && selectedStrats.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveStrategySlot(idx)}
+                        className="text-red-500 hover:text-red-700 p-1.5 rounded-lg hover:bg-red-50 transition-colors"
+                        title="Eliminar estrategia"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  {def?.description && (
+                    <p className="text-[11px] text-slate-muted italic">{def.description}</p>
+                  )}
+
+                  {/* Render Parameters dynamically according to schema */}
+                  {def?.parameters && def.parameters.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 pt-1">
+                      {def.parameters.map((param: any) => (
+                        <div key={param.name} className="bg-white p-2 rounded-lg border border-slate-subtle/80">
+                          <label className="text-[10px] font-bold text-navy block truncate mb-1" title={param.label}>
+                            {param.label}
+                          </label>
+                          <input
+                            type="number"
+                            step={param.type === "float" ? "0.1" : "1"}
+                            min={param.min}
+                            max={param.max}
+                            value={slot.params[param.name] ?? param.default}
+                            onChange={(e) =>
+                              handleParamChange(
+                                idx,
+                                param.name,
+                                param.type === "float"
+                                  ? parseFloat(e.target.value) || 0
+                                  : parseInt(e.target.value, 10) || 0
+                              )
+                            }
+                            className="w-full bg-slate-canvas border border-slate-subtle text-navy font-mono font-bold text-xs rounded p-1.5 focus:outline-none focus:border-tech-blue"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Row 5: Date Range Presets & Action Button */}
+        <div className="pt-2 border-t border-slate-subtle flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Presets */}
+            <div className="flex bg-slate-canvas p-1 rounded-xl border border-slate-subtle">
+              {["3M", "6M", "1Y", "2Y", "3Y", "5Y", "YTD"].map((p) => (
                 <button
                   key={p}
                   type="button"
                   onClick={() => handlePresetChange(p)}
-                  className={`py-1.5 text-[11px] font-bold rounded-lg transition-all ${
+                  className={`px-3 py-1.5 text-[11px] font-bold rounded-lg transition-all ${
                     selectedPreset === p
                       ? "bg-navy text-white shadow-sm"
                       : "text-slate-muted hover:text-navy hover:bg-white"
@@ -298,91 +802,56 @@ export default function BacktestLabPage() {
                 </button>
               ))}
             </div>
-          </div>
 
-          {/* Capital & Leverage */}
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-xs text-navy font-bold block mb-1.5">Capital ($ USD)</label>
+            {/* Custom Dates */}
+            <div className="flex items-center gap-2 text-xs text-slate-muted">
+              <Calendar className="w-3.5 h-3.5 text-tech-blue" />
               <input
-                type="number"
-                value={capital}
-                onChange={(e) => setCapital(parseFloat(e.target.value) || 0)}
-                className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-medium focus:outline-none focus:border-tech-blue"
+                type="date"
+                value={startDate}
+                onChange={(e) => {
+                  setStartDate(e.target.value);
+                  setSelectedPreset("CUSTOM");
+                }}
+                className="bg-slate-canvas border border-slate-subtle rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-navy"
+              />
+              <span>hasta</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => {
+                  setEndDate(e.target.value);
+                  setSelectedPreset("CUSTOM");
+                }}
+                className="bg-slate-canvas border border-slate-subtle rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-navy"
               />
             </div>
-            <div>
-              <label className="text-xs text-navy font-bold block mb-1.5">Apalancamiento</label>
-              <select
-                value={leverage}
-                onChange={(e) => setLeverage(parseFloat(e.target.value))}
-                className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-semibold focus:outline-none focus:border-tech-blue"
-              >
-                <option value={1.0}>1.0x (Spot)</option>
-                <option value={1.5}>1.5x</option>
-                <option value={2.0}>2.0x (Margin)</option>
-                <option value={3.0}>3.0x (Leveraged)</option>
-              </select>
-            </div>
           </div>
 
-          {/* Action Button */}
-          <div className="flex items-end">
-            <button
-              onClick={handleRunBacktest}
-              disabled={loading || !selectedStrategyId}
-              className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-navy hover:bg-navy-hover text-white text-xs font-bold rounded-xl shadow-navy-glow transition-all disabled:opacity-50"
-            >
-              <Play className={`w-3.5 h-3.5 fill-white ${loading ? "animate-spin" : ""}`} />
-              <span>{loading ? "Ejecutando Simulación..." : "Ejecutar Backtest"}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Custom Date Inputs Collapsible / Sub-row */}
-        <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-subtle/50 text-xs text-slate-muted">
-          <span className="font-semibold text-slate-muted flex items-center gap-1">
-            <Calendar className="w-3.5 h-3.5" /> Rango evaluado:
-          </span>
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => {
-                setStartDate(e.target.value);
-                setSelectedPreset("CUSTOM");
-              }}
-              className="bg-slate-canvas border border-slate-subtle rounded-lg px-2 py-1 text-xs font-mono text-navy"
-            />
-            <span>hasta</span>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => {
-                setEndDate(e.target.value);
-                setSelectedPreset("CUSTOM");
-              }}
-              className="bg-slate-canvas border border-slate-subtle rounded-lg px-2 py-1 text-xs font-mono text-navy"
-            />
-          </div>
-          {selectedStrategy && (
-            <span className="ml-auto text-[11px] font-mono text-slate-muted">
-              Activo transado: <strong className="text-navy">{tradedSymbol}</strong> | Motor:{" "}
-              <strong className="text-navy">{selectedStrategy.engine}</strong>
-            </span>
-          )}
+          {/* Run Button */}
+          <button
+            onClick={handleRunBacktest}
+            disabled={loading || !tradedSymbol}
+            className="flex items-center justify-center gap-2 px-8 py-3.5 bg-navy hover:bg-navy-hover text-white text-xs font-bold rounded-xl shadow-navy-glow transition-all disabled:opacity-50 min-w-[220px]"
+          >
+            <Play className={`w-4 h-4 fill-white ${loading ? "animate-spin" : ""}`} />
+            <span>{loading ? "Calculando Simulación..." : "Ejecutar Backtest"}</span>
+          </button>
         </div>
       </div>
 
-      {/* Error Notification */}
+      {/* Error Banner */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl text-xs flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          <span>{error}</span>
+        <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl text-xs flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 flex-shrink-0" />
+          <div className="space-y-0.5">
+            <span className="font-bold block">Error en la simulación:</span>
+            <span>{error}</span>
+          </div>
         </div>
       )}
 
-      {/* Results View */}
+      {/* Results Section */}
       {result && result.metrics && (
         <div className="space-y-6">
           {/* Executive Summary Banner */}
@@ -390,16 +859,21 @@ export default function BacktestLabPage() {
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <span className="text-[11px] uppercase tracking-wider text-tech-blue-light font-bold">
-                  Resultado de Simulación
+                  Simulación Cuantitativa Completada
                 </span>
                 <span className="bg-white/10 text-white text-[10px] px-2 py-0.5 rounded-full font-mono">
                   {result.start_date} → {result.end_date}
                 </span>
+                {result.applied_leverage?.use_dynamic_leverage && (
+                  <span className="bg-tech-blue/30 text-tech-blue-light text-[10px] px-2 py-0.5 rounded-full font-bold border border-tech-blue/40">
+                    DYNAMIC LEVERAGE {result.applied_leverage.base_leverage}x → {result.applied_leverage.max_leverage}x
+                  </span>
+                )}
               </div>
               <h2 className="text-2xl font-bold font-heading">
-                Bot: {selectedStrategy?.name || result.strategy_slug} ({result.symbol})
+                Activo: {result.symbol} | Estrategia: {result.strategy_slug}
               </h2>
-              <div className="flex items-center gap-4 text-xs text-slate-300 pt-1">
+              <div className="flex flex-wrap items-center gap-4 text-xs text-slate-300 pt-1">
                 <span>
                   Capital Inicial:{" "}
                   <strong className="text-white font-mono">
@@ -550,22 +1024,31 @@ export default function BacktestLabPage() {
             </div>
           </div>
 
-          {/* Equity Curve SVG Chart */}
+          {/* Equity Curve SVG Chart with Trade Entry & Exit Markers */}
           <div className="bg-white border border-slate-subtle p-6 rounded-2xl shadow-card-subtle space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-subtle pb-3">
               <div>
                 <h2 className="font-heading font-bold text-base text-navy flex items-center gap-2">
                   <TrendingUp className="w-4 h-4 text-tech-blue" />
-                  Curva de Rendimiento Acumulado (Bot vs Buy & Hold)
+                  Curva de Rendimiento Acumulado con Momentos de Trade
                 </h2>
                 <p className="text-xs text-slate-muted mt-0.5">
-                  Evolución patrimonial de $
-                  {Number(result.initial_capital).toLocaleString()} con reinversión de utilidades y comisiones
+                  Los marcadores <strong>▲ verdes</strong> indican inicio de trade y <strong>▼ rojos/verdes</strong> cierre de posición con su respectiva estrategia.
                 </p>
               </div>
 
-              {/* Chart Legend */}
-              <div className="flex items-center gap-4 text-xs font-semibold">
+              {/* Chart Legend & Marker Toggle */}
+              <div className="flex flex-wrap items-center gap-4 text-xs font-semibold">
+                <label className="flex items-center gap-1.5 cursor-pointer select-none text-navy bg-slate-canvas px-2.5 py-1 rounded-lg border border-slate-subtle">
+                  <input
+                    type="checkbox"
+                    checked={showMarkers}
+                    onChange={(e) => setShowMarkers(e.target.checked)}
+                    className="accent-tech-blue rounded"
+                  />
+                  <span>Mostrar Trades (▲ Entradas / ▼ Salidas)</span>
+                </label>
+
                 <div className="flex items-center gap-1.5">
                   <span className="w-3 h-3 rounded-full bg-tech-blue"></span>
                   <span className="text-navy">Estrategia Bot</span>
@@ -582,7 +1065,10 @@ export default function BacktestLabPage() {
               <svg
                 viewBox={`0 0 ${svgWidth} ${svgHeight}`}
                 className="w-full h-auto"
-                onMouseLeave={() => setHoveredPoint(null)}
+                onMouseLeave={() => {
+                  setHoveredPoint(null);
+                  setHoveredMarker(null);
+                }}
               >
                 {/* Y-Axis Horizontal Grid Lines */}
                 {[0, 0.25, 0.5, 0.75, 1.0].map((ratio, i) => {
@@ -651,7 +1137,41 @@ export default function BacktestLabPage() {
                   className="drop-shadow-sm"
                 />
 
-                {/* Hover Interaction Vertical Line & Highlight Dots */}
+                {/* Trade Start (BUY ▲) and Trade End (SELL ▼) Markers */}
+                {showMarkers &&
+                  renderedMarkers.map((m) => {
+                    const isBuy = m.type === "BUY";
+                    return (
+                      <g
+                        key={m.id}
+                        className="cursor-pointer transition-transform hover:scale-125"
+                        onMouseEnter={() => setHoveredMarker(m)}
+                        onMouseLeave={() => setHoveredMarker(null)}
+                      >
+                        {isBuy ? (
+                          // Upward Triangle (BUY Entry)
+                          <polygon
+                            points={`${m.x},${m.y - 12} ${m.x - 5},${m.y - 3} ${m.x + 5},${m.y - 3}`}
+                            fill="#10b981"
+                            stroke="#065f46"
+                            strokeWidth="1.2"
+                            className="drop-shadow-sm"
+                          />
+                        ) : (
+                          // Downward Triangle (SELL Exit)
+                          <polygon
+                            points={`${m.x},${m.y + 12} ${m.x - 5},${m.y + 3} ${m.x + 5},${m.y + 3}`}
+                            fill={m.is_win ? "#10b981" : "#ef4444"}
+                            stroke={m.is_win ? "#065f46" : "#991b1b"}
+                            strokeWidth="1.2"
+                            className="drop-shadow-sm"
+                          />
+                        )}
+                      </g>
+                    );
+                  })}
+
+                {/* Hover Interaction Vertical Line */}
                 {hoveredPoint && (
                   <g>
                     <line
@@ -683,9 +1203,9 @@ export default function BacktestLabPage() {
                 {points.map((pt, i) => (
                   <rect
                     key={i}
-                    x={pt.x - 10}
+                    x={pt.x - 8}
                     y={padding.top}
-                    width="20"
+                    width="16"
                     height={svgHeight - padding.top - padding.bottom}
                     fill="transparent"
                     onMouseEnter={() =>
@@ -701,8 +1221,55 @@ export default function BacktestLabPage() {
                 ))}
               </svg>
 
-              {/* Tooltip Overlay */}
-              {hoveredPoint && (
+              {/* Marker Tooltip (shows exact Trade details and sub-strategy attribution) */}
+              {hoveredMarker && (
+                <div
+                  className="absolute pointer-events-none bg-navy-dark text-white text-xs p-3 rounded-xl shadow-navy-glow border border-tech-blue/40 z-20 font-mono space-y-1.5 max-w-xs"
+                  style={{
+                    left: `${Math.min(
+                      Math.max(hoveredMarker.x / (svgWidth / 100), 8),
+                      72
+                    )}%`,
+                    top: hoveredMarker.type === "BUY" ? "20px" : "70px",
+                  }}
+                >
+                  <div className="flex items-center gap-1.5 border-b border-white/10 pb-1 font-bold">
+                    {hoveredMarker.type === "BUY" ? (
+                      <span className="text-emerald-400">🟢 INICIO DE TRADE (ENTRADA)</span>
+                    ) : (
+                      <span className={hoveredMarker.is_win ? "text-emerald-400" : "text-red-400"}>
+                        🔴 CIERRE DE TRADE (SALIDA)
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-300">
+                    Fecha: <strong className="text-white">{hoveredMarker.date}</strong> @ $
+                    <strong className="text-white">{hoveredMarker.price}</strong>
+                  </div>
+                  <div className="text-[11px] text-tech-blue-light font-bold">
+                    Disparado por:{" "}
+                    <span className="text-amber-300">{hoveredMarker.strategy}</span>
+                  </div>
+                  {hoveredMarker.type === "BUY" && hoveredMarker.leverage && (
+                    <div className="text-[10px] text-slate-300">
+                      Apalancamiento aplicado:{" "}
+                      <strong className="text-emerald-300">{hoveredMarker.leverage}x</strong>
+                    </div>
+                  )}
+                  {hoveredMarker.type === "SELL" && (
+                    <div className="text-[11px] font-bold">
+                      Resultado:{" "}
+                      <span className={hoveredMarker.is_win ? "text-emerald-400" : "text-red-400"}>
+                        {hoveredMarker.pnl_pct >= 0 ? "+" : ""}
+                        {hoveredMarker.pnl_pct}% (${hoveredMarker.pnl})
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* General Equity Curve Tooltip Overlay */}
+              {!hoveredMarker && hoveredPoint && (
                 <div
                   className="absolute pointer-events-none bg-navy text-white text-[11px] p-2.5 rounded-xl shadow-navy-glow border border-white/10 z-10 font-mono space-y-1"
                   style={{
@@ -729,16 +1296,16 @@ export default function BacktestLabPage() {
             </div>
           </div>
 
-          {/* Historical Trades Log Table */}
+          {/* Historical Trades Log Table with Sub-Strategy Attribution */}
           <div className="bg-white border border-slate-subtle p-6 rounded-2xl shadow-card-subtle space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-subtle pb-3">
               <div>
                 <h2 className="font-heading font-bold text-base text-navy flex items-center gap-2">
                   <FileSpreadsheet className="w-4 h-4 text-tech-blue" />
-                  Registro Histórico de Operaciones (Trades)
+                  Registro Histórico de Operaciones (Trades) y Atribución
                 </h2>
                 <p className="text-xs text-slate-muted mt-0.5">
-                  Auditoría completa de cada orden de compra y venta ejecutada por el modelo
+                  Auditoría completa de qué sub-estrategia inició y cerró cada posición, junto con su apalancamiento aplicado
                 </p>
               </div>
               <span className="text-xs font-mono font-bold bg-slate-canvas px-3 py-1 rounded-lg text-navy border border-slate-subtle">
@@ -753,8 +1320,11 @@ export default function BacktestLabPage() {
                     <tr className="border-b border-slate-subtle text-slate-muted uppercase font-bold text-[10px]">
                       <th className="py-2.5 px-3">#</th>
                       <th className="py-2.5 px-3">Entrada (Fecha / Precio)</th>
+                      <th className="py-2.5 px-3">Estrategia Entrada</th>
                       <th className="py-2.5 px-3">Salida (Fecha / Precio)</th>
-                      <th className="py-2.5 px-3">Títulos (Shares)</th>
+                      <th className="py-2.5 px-3">Estrategia Salida</th>
+                      <th className="py-2.5 px-3 text-center">Apalancamiento</th>
+                      <th className="py-2.5 px-3">Títulos</th>
                       <th className="py-2.5 px-3 text-right">PnL Neto ($)</th>
                       <th className="py-2.5 px-3 text-right">Retorno (%)</th>
                       <th className="py-2.5 px-3 text-center">Estado</th>
@@ -773,9 +1343,24 @@ export default function BacktestLabPage() {
                             </span>
                           </td>
                           <td className="py-2.5 px-3">
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-tech-blue/10 text-tech-blue border border-tech-blue/20">
+                              {trade.entry_strategy || "Estrategia"}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3">
                             <span className="font-semibold text-navy">{trade.exit_date}</span>
                             <span className="text-slate-muted text-[11px] ml-1.5">
                               @ ${trade.exit_price}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                              {trade.exit_strategy || "Regla de Salida"}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                              {trade.leverage || 1.0}x
                             </span>
                           </td>
                           <td className="py-2.5 px-3 text-slate-700">{trade.shares}</td>
