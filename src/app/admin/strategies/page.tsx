@@ -309,36 +309,16 @@ export default function AdminStrategiesPage() {
         </div>
       )}
 
-      {/* Bot Templates Preview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {Object.entries(botTypes).map(([key, bot]: [string, any]) => (
-          <div
-            key={key}
-            className="bg-white border border-slate-subtle p-4 rounded-xl shadow-card-subtle flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-canvas text-navy border border-slate-subtle">
-                  {bot.category}
-                </span>
-                <Bot className="w-4 h-4 text-tech-blue" />
-              </div>
-              <h3 className="font-heading font-bold text-navy text-sm">{bot.name}</h3>
-              <p className="text-xs text-slate-muted mt-1 leading-relaxed">{bot.description}</p>
-            </div>
-            <div className="mt-3 pt-3 border-t border-slate-subtle/60 flex items-center justify-between text-[11px] text-slate-muted">
-              <span>{bot.requires_signal_asset ? "Cross-Asset (2 Activos)" : "Single Asset"}</span>
-              <span className="font-mono font-bold text-navy">{bot.default_timeframe}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Instances Table */}
+      {/* Instances Table (Bots Configurados en el Sistema) */}
       <div className="bg-white border border-slate-subtle rounded-2xl shadow-card-subtle overflow-hidden">
         <div className="p-4 bg-slate-canvas border-b border-slate-subtle flex justify-between items-center">
-          <h2 className="font-heading font-bold text-sm text-navy">Bots Configurados en el Sistema</h2>
-          <span className="text-xs text-slate-muted font-medium">Total: {strategies.length}</span>
+          <div>
+            <h2 className="font-heading font-bold text-sm text-navy">Bots Configurados en el Sistema</h2>
+            <p className="text-[11px] text-slate-muted">Instancias activas con versionado inmutable y cálculo de señales</p>
+          </div>
+          <span className="text-xs text-slate-muted font-medium bg-white px-2.5 py-1 rounded-lg border border-slate-subtle">
+            Total: <strong className="text-navy">{strategies.length}</strong>
+          </span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-navy">
@@ -518,15 +498,59 @@ export default function AdminStrategiesPage() {
         </div>
       </div>
 
+      {/* Bot Templates Preview (Horizontal Scroll / Carousel) */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="font-heading font-bold text-sm text-navy">Tipos de Estrategias y Plantillas de Bot</h2>
+            <p className="text-xs text-slate-muted">Desliza horizontalmente para explorar las tipologías disponibles en el motor</p>
+          </div>
+          <span className="text-[11px] font-semibold text-slate-400">
+            {Object.keys(botTypes).length} Plantillas
+          </span>
+        </div>
+
+        <div className="flex gap-4 overflow-x-auto pb-4 pt-1 snap-x snap-mandatory">
+          {Object.entries(botTypes).map(([key, bot]: [string, any]) => (
+            <div
+              key={key}
+              className="min-w-[280px] sm:min-w-[320px] max-w-[340px] flex-shrink-0 snap-start bg-white border border-slate-subtle p-5 rounded-2xl shadow-card-subtle flex flex-col justify-between hover:border-tech-blue/30 transition-all"
+            >
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-slate-canvas text-navy border border-slate-subtle">
+                    {bot.category}
+                  </span>
+                  <div className="w-7 h-7 rounded-lg bg-tech-blue-light flex items-center justify-center text-tech-blue">
+                    <Bot className="w-4 h-4" />
+                  </div>
+                </div>
+                <h3 className="font-heading font-bold text-navy text-sm">{bot.name}</h3>
+                <p className="text-xs text-slate-muted mt-2 leading-relaxed line-clamp-3">{bot.description}</p>
+              </div>
+              <div className="mt-4 pt-3 border-t border-slate-subtle/80 flex items-center justify-between text-[11px] text-slate-muted">
+                <span className="font-medium text-slate-600">
+                  {bot.requires_signal_asset ? "Cross-Asset (2 Activos)" : "Single Asset"}
+                </span>
+                <span className="font-mono font-bold text-navy bg-slate-100 px-2 py-0.5 rounded text-[10px]">
+                  {bot.default_timeframe}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Create / Reconfigure Bot Wizard Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-navy/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in overflow-y-auto">
-          <div className="bg-white border border-slate-subtle p-6 rounded-2xl max-w-2xl w-full shadow-card-hover space-y-5 my-8">
-            <div className="flex justify-between items-center border-b border-slate-subtle pb-4">
+        <div className="fixed inset-0 bg-navy/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 z-[100] animate-fade-in">
+          <div className="bg-white border border-slate-subtle rounded-2xl max-w-2xl w-full max-h-[88vh] shadow-2xl flex flex-col overflow-hidden">
+            {/* Fixed Header */}
+            <div className="p-5 sm:p-6 border-b border-slate-subtle flex justify-between items-start flex-shrink-0 bg-white">
               <div>
                 <h2 className="font-heading font-extrabold text-xl text-navy flex items-center gap-2">
                   <Bot className="w-5 h-5 text-tech-blue" />
-                  {editingBot ? `Reconfigurar Bot: ${editingBot.name}` : "Crear Nueva Instancia de Bot"}
+                  <span>{editingBot ? `Reconfigurar Bot: ${editingBot.name}` : "Crear Nueva Instancia de Bot"}</span>
                 </h2>
                 <p className="text-xs text-slate-muted mt-0.5">
                   {editingBot ? (
@@ -539,240 +563,244 @@ export default function AdminStrategiesPage() {
                 </p>
               </div>
               <button
+                type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="text-slate-muted hover:text-navy text-sm font-bold p-1"
+                className="text-slate-muted hover:text-navy text-sm font-bold p-1 rounded-lg hover:bg-slate-100 transition-colors"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleSubmitBot} className="space-y-4">
-              {/* Bot Template Selection */}
-              <div>
-                <label className="text-xs text-navy font-bold block mb-1">
-                  1. Tipo de Bot (Plantilla del Catálogo)
-                </label>
-                <select
-                  value={botType}
-                  onChange={(e) => {
-                    const nextType = e.target.value;
-                    setBotType(nextType);
-                    // Adjust strategy slots if multi vs single
-                    if (nextType === "multi_strategy" && selectedStrats.length < 2) {
-                      handleAddStrategySlot();
-                    } else if (nextType === "one_strategy" && selectedStrats.length > 1) {
-                      setSelectedStrats((prev) => [prev[0]]);
-                    }
-                  }}
-                  className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-3 text-xs font-semibold focus:outline-none focus:border-tech-blue"
-                >
-                  {Object.entries(botTypes).map(([k, b]: [string, any]) => (
-                    <option key={k} value={k}>
-                      {b.name} ({b.category})
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[11px] text-slate-muted mt-1">
-                  {botTypes[botType]?.description}
-                </p>
-              </div>
-
-              {/* Bot Name & Family */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-navy font-bold block mb-1">Nombre del Bot</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ej. TQQQ Alpha Bollinger"
-                    value={botName}
-                    onChange={(e) => setBotName(e.target.value)}
-                    className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-3 text-xs font-medium focus:outline-none focus:border-tech-blue"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-navy font-bold block mb-1">Familia / Categoría</label>
-                  <input
-                    type="text"
-                    value={botFamily}
-                    onChange={(e) => setBotFamily(e.target.value)}
-                    placeholder="Ej. Tech, Macro, Crypto"
-                    className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-3 text-xs font-medium focus:outline-none focus:border-tech-blue"
-                  />
-                </div>
-              </div>
-
-              {/* Instruments Selection */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-subtle">
+            {/* Scrollable Form Body */}
+            <form onSubmit={handleSubmitBot} className="flex-1 flex flex-col overflow-hidden">
+              <div className="p-5 sm:p-6 space-y-4 overflow-y-auto flex-1 overscroll-contain">
+                {/* Bot Template Selection */}
                 <div>
                   <label className="text-xs text-navy font-bold block mb-1">
-                    Activo Principal a Operar (Traded Asset)
+                    1. Tipo de Bot (Plantilla del Catálogo)
                   </label>
-                  <input
-                    type="text"
-                    required={botTypes[botType]?.requires_traded_asset}
-                    placeholder="Ej. TQQQ, SPY, AAPL"
-                    value={tradedSymbol}
-                    onChange={(e) => setTradedSymbol(e.target.value.toUpperCase())}
-                    className="w-full bg-white border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
-                  />
+                  <select
+                    value={botType}
+                    onChange={(e) => {
+                      const nextType = e.target.value;
+                      setBotType(nextType);
+                      // Adjust strategy slots if multi vs single
+                      if (nextType === "multi_strategy" && selectedStrats.length < 2) {
+                        handleAddStrategySlot();
+                      } else if (nextType === "one_strategy" && selectedStrats.length > 1) {
+                        setSelectedStrats((prev) => [prev[0]]);
+                      }
+                    }}
+                    className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-3 text-xs font-semibold focus:outline-none focus:border-tech-blue"
+                  >
+                    {Object.entries(botTypes).map(([k, b]: [string, any]) => (
+                      <option key={k} value={k}>
+                        {b.name} ({b.category})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-slate-muted mt-1">
+                    {botTypes[botType]?.description}
+                  </p>
                 </div>
 
-                {botType === "cross_asset" && (
+                {/* Bot Name & Family */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs text-navy font-bold block mb-1">
-                      Activo de Señales (Signal Source Asset)
-                    </label>
+                    <label className="text-xs text-navy font-bold block mb-1">Nombre del Bot</label>
                     <input
                       type="text"
                       required
-                      placeholder="Ej. TLT, QQQ, ^VIX"
-                      value={signalSymbol}
-                      onChange={(e) => setSignalSymbol(e.target.value.toUpperCase())}
-                      className="w-full bg-white border border-amber-300 text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-amber-500"
+                      placeholder="Ej. TQQQ Alpha Bollinger"
+                      value={botName}
+                      onChange={(e) => setBotName(e.target.value)}
+                      className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-3 text-xs font-medium focus:outline-none focus:border-tech-blue"
                     />
-                    <span className="text-[10px] text-amber-700">
-                      Calcula las señales con este activo y opera en el de arriba.
-                    </span>
                   </div>
-                )}
-              </div>
+                  <div>
+                    <label className="text-xs text-navy font-bold block mb-1">Familia / Categoría</label>
+                    <input
+                      type="text"
+                      value={botFamily}
+                      onChange={(e) => setBotFamily(e.target.value)}
+                      placeholder="Ej. Tech, Macro, Crypto"
+                      className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-3 text-xs font-medium focus:outline-none focus:border-tech-blue"
+                    />
+                  </div>
+                </div>
 
-              {/* Quantitative Strategies Selection from Catalog */}
-              {botType !== "follow_price" &&
-                botType !== "signal_dollar" &&
-                botType !== "signal_options" && (
-                  <div className="space-y-3 pt-2">
-                    <div className="flex justify-between items-center">
-                      <label className="text-xs text-navy font-bold">
-                        2. Estrategias Cuantitativas ({selectedStrats.length})
+                {/* Instruments Selection */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-subtle">
+                  <div>
+                    <label className="text-xs text-navy font-bold block mb-1">
+                      Activo Principal a Operar (Traded Asset)
+                    </label>
+                    <input
+                      type="text"
+                      required={botTypes[botType]?.requires_traded_asset}
+                      placeholder="Ej. TQQQ, SPY, AAPL"
+                      value={tradedSymbol}
+                      onChange={(e) => setTradedSymbol(e.target.value.toUpperCase())}
+                      className="w-full bg-white border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
+                    />
+                  </div>
+
+                  {botType === "cross_asset" && (
+                    <div>
+                      <label className="text-xs text-navy font-bold block mb-1">
+                        Activo de Señales (Signal Source Asset)
                       </label>
-                      {botType === "multi_strategy" && (
-                        <button
-                          type="button"
-                          onClick={handleAddStrategySlot}
-                          className="text-tech-blue hover:text-navy text-xs font-bold flex items-center gap-1"
-                        >
-                          <PlusCircle className="w-3.5 h-3.5" /> Agregar Estrategia
-                        </button>
-                      )}
+                      <input
+                        type="text"
+                        required
+                        placeholder="Ej. TLT, QQQ, ^VIX"
+                        value={signalSymbol}
+                        onChange={(e) => setSignalSymbol(e.target.value.toUpperCase())}
+                        className="w-full bg-white border border-amber-300 text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-amber-500"
+                      />
+                      <span className="text-[10px] text-amber-700">
+                        Calcula las señales con este activo y opera en el de arriba.
+                      </span>
                     </div>
+                  )}
+                </div>
 
-                    {selectedStrats.map((slot, idx) => {
-                      const def = strategiesCatalog[slot.strategy_name];
-                      return (
-                        <div
-                          key={idx}
-                          className="p-3.5 bg-slate-50 border border-slate-subtle rounded-xl space-y-3"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[10px] font-bold text-slate-muted">
-                              Estrategia #{idx + 1}
-                            </span>
-                            {selectedStrats.length > 1 && botType === "multi_strategy" && (
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveStrategySlot(idx)}
-                                className="text-red-500 hover:text-red-700 text-xs"
+                {/* Quantitative Strategies Selection from Catalog */}
+                {botType !== "follow_price" &&
+                  botType !== "signal_dollar" &&
+                  botType !== "signal_options" && (
+                    <div className="space-y-3 pt-2">
+                      <div className="flex justify-between items-center">
+                        <label className="text-xs text-navy font-bold">
+                          2. Estrategias Cuantitativas ({selectedStrats.length})
+                        </label>
+                        {botType === "multi_strategy" && (
+                          <button
+                            type="button"
+                            onClick={handleAddStrategySlot}
+                            className="text-tech-blue hover:text-navy text-xs font-bold flex items-center gap-1"
+                          >
+                            <PlusCircle className="w-3.5 h-3.5" /> Agregar Estrategia
+                          </button>
+                        )}
+                      </div>
+
+                      {selectedStrats.map((slot, idx) => {
+                        const def = strategiesCatalog[slot.strategy_name];
+                        return (
+                          <div
+                            key={idx}
+                            className="p-3.5 bg-slate-50 border border-slate-subtle rounded-xl space-y-3"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] font-bold text-slate-muted">
+                                Estrategia #{idx + 1}
+                              </span>
+                              {selectedStrats.length > 1 && botType === "multi_strategy" && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveStrategySlot(idx)}
+                                  className="text-red-500 hover:text-red-700 text-xs"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+
+                            <div>
+                              <select
+                                value={slot.strategy_name}
+                                onChange={(e) => handleStrategyChange(idx, e.target.value)}
+                                className="w-full bg-white border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-semibold focus:outline-none focus:border-tech-blue"
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                                {Object.entries(strategiesCatalog).map(([k, item]: [string, any]) => (
+                                  <option key={k} value={k}>
+                                    {item.name} [{item.category}]
+                                  </option>
+                                ))}
+                              </select>
+                              <p className="text-[11px] text-slate-muted mt-1">{def?.description}</p>
+                            </div>
+
+                            {/* Dynamic Parameters based on schema */}
+                            {def?.parameters && def.parameters.length > 0 && (
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2 border-t border-slate-200">
+                                {def.parameters.map((p: any) => (
+                                  <div key={p.name}>
+                                    <label className="text-[10px] font-bold text-navy block mb-0.5 truncate">
+                                      {p.label}
+                                    </label>
+                                    <input
+                                      type="number"
+                                      step={p.type === "float" ? "0.1" : "1"}
+                                      min={p.min}
+                                      max={p.max}
+                                      value={
+                                        slot.params[p.name] !== undefined
+                                          ? slot.params[p.name]
+                                          : p.default
+                                      }
+                                      onChange={(e) =>
+                                        handleParamChange(
+                                          idx,
+                                          p.name,
+                                          parseFloat(e.target.value) || 0
+                                        )
+                                      }
+                                      className="w-full bg-white border border-slate-subtle text-navy rounded-lg p-1.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
                             )}
                           </div>
+                        );
+                      })}
+                    </div>
+                  )}
 
-                          <div>
-                            <select
-                              value={slot.strategy_name}
-                              onChange={(e) => handleStrategyChange(idx, e.target.value)}
-                              className="w-full bg-white border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-semibold focus:outline-none focus:border-tech-blue"
-                            >
-                              {Object.entries(strategiesCatalog).map(([k, item]: [string, any]) => (
-                                <option key={k} value={k}>
-                                  {item.name} [{item.category}]
-                                </option>
-                              ))}
-                            </select>
-                            <p className="text-[11px] text-slate-muted mt-1">{def?.description}</p>
-                          </div>
-
-                          {/* Dynamic Parameters based on schema */}
-                          {def?.parameters && def.parameters.length > 0 && (
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2 border-t border-slate-200">
-                              {def.parameters.map((p: any) => (
-                                <div key={p.name}>
-                                  <label className="text-[10px] font-bold text-navy block mb-0.5 truncate">
-                                    {p.label}
-                                  </label>
-                                  <input
-                                    type="number"
-                                    step={p.type === "float" ? "0.1" : "1"}
-                                    min={p.min}
-                                    max={p.max}
-                                    value={
-                                      slot.params[p.name] !== undefined
-                                        ? slot.params[p.name]
-                                        : p.default
-                                    }
-                                    onChange={(e) =>
-                                      handleParamChange(
-                                        idx,
-                                        p.name,
-                                        parseFloat(e.target.value) || 0
-                                      )
-                                    }
-                                    className="w-full bg-white border border-slate-subtle text-navy rounded-lg p-1.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
-                                  />
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-              {/* Leverage & Macro Settings */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-                <div>
-                  <label className="text-[11px] text-navy font-bold block mb-1">Apalancamiento Base</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="1.0"
-                    max="5.0"
-                    value={leverage}
-                    onChange={(e) => setLeverage(parseFloat(e.target.value) || 1.0)}
-                    className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] text-navy font-bold block mb-1">Apalancamiento Máximo</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="1.0"
-                    max="10.0"
-                    value={maxLeverage}
-                    onChange={(e) => setMaxLeverage(parseFloat(e.target.value) || 1.0)}
-                    className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
-                  />
-                </div>
-                <div className="flex items-center pt-5">
-                  <label className="inline-flex items-center gap-2 cursor-pointer text-xs font-bold text-navy">
+                {/* Leverage & Macro Settings */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                  <div>
+                    <label className="text-[11px] text-navy font-bold block mb-1">Apalancamiento Base</label>
                     <input
-                      type="checkbox"
-                      checked={useRegimes}
-                      onChange={(e) => setUseRegimes(e.target.checked)}
-                      className="rounded text-tech-blue focus:ring-tech-blue"
+                      type="number"
+                      step="0.1"
+                      min="1.0"
+                      max="5.0"
+                      value={leverage}
+                      onChange={(e) => setLeverage(parseFloat(e.target.value) || 1.0)}
+                      className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
                     />
-                    Apalancamiento Dinámico (Régimen)
-                  </label>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-navy font-bold block mb-1">Apalancamiento Máximo</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="1.0"
+                      max="10.0"
+                      value={maxLeverage}
+                      onChange={(e) => setMaxLeverage(parseFloat(e.target.value) || 1.0)}
+                      className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
+                    />
+                  </div>
+                  <div className="flex items-center pt-5">
+                    <label className="inline-flex items-center gap-2 cursor-pointer text-xs font-bold text-navy">
+                      <input
+                        type="checkbox"
+                        checked={useRegimes}
+                        onChange={(e) => setUseRegimes(e.target.checked)}
+                        className="rounded text-tech-blue focus:ring-tech-blue"
+                      />
+                      Apalancamiento Dinámico (Régimen)
+                    </label>
+                  </div>
                 </div>
               </div>
 
-              {/* Modal Actions */}
-              <div className="flex justify-end gap-2 pt-4 border-t border-slate-subtle">
+              {/* Fixed Footer Actions */}
+              <div className="p-4 sm:px-6 bg-slate-canvas border-t border-slate-subtle flex justify-end gap-2 flex-shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}

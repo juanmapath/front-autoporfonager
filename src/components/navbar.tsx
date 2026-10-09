@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { User as UserIcon, LogOut, LogIn, ExternalLink, Settings, SlidersHorizontal, Layers, FlaskConical } from "lucide-react";
+import { User as UserIcon, LogOut, LogIn, Layers, FlaskConical } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 
 export default function Navbar() {
@@ -28,81 +28,31 @@ export default function Navbar() {
             </span>
           </Link>
 
-          {/* Main User Navigation */}
-          {isAuthenticated && !isAuthPage && (
-            <nav className="hidden md:flex items-center gap-1 text-xs font-semibold">
+          {/* Staff Navigation ONLY for Strategies & Backtest */}
+          {isAuthenticated && user?.is_staff && !isAuthPage && (
+            <nav className="hidden md:flex items-center gap-1.5 text-xs font-semibold">
               <Link
-                href="/portfolios"
-                className={`px-3 py-1.5 rounded-lg transition-all ${
-                  pathname === "/portfolios"
+                href="/admin/strategies"
+                className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+                  pathname === "/admin/strategies"
                     ? "bg-navy text-white font-bold shadow-sm"
                     : "text-slate-muted hover:text-navy hover:bg-slate-50"
                 }`}
               >
-                Portafolios
+                <Layers className="w-3.5 h-3.5" />
+                <span>Estrategias / Bots</span>
               </Link>
               <Link
-                href="/allocations"
-                className={`px-3 py-1.5 rounded-lg transition-all ${
-                  pathname === "/allocations"
+                href="/admin/backtest"
+                className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+                  pathname === "/admin/backtest"
                     ? "bg-navy text-white font-bold shadow-sm"
                     : "text-slate-muted hover:text-navy hover:bg-slate-50"
                 }`}
               >
-                Asignaciones
+                <FlaskConical className="w-3.5 h-3.5" />
+                <span>Backtest Lab</span>
               </Link>
-              <Link
-                href="/orders"
-                className={`px-3 py-1.5 rounded-lg transition-all ${
-                  pathname === "/orders"
-                    ? "bg-navy text-white font-bold shadow-sm"
-                    : "text-slate-muted hover:text-navy hover:bg-slate-50"
-                }`}
-              >
-                Órdenes
-              </Link>
-
-              {/* Admin / Staff Navigation */}
-              {user?.is_staff && (
-                <div className="flex items-center gap-1 pl-3 border-l border-slate-200 ml-2">
-                  <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mr-1 bg-slate-100 px-1.5 py-0.5 rounded">
-                    Admin
-                  </span>
-                  <Link
-                    href="/admin"
-                    className={`px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1 ${
-                      pathname === "/admin"
-                        ? "bg-navy text-white font-bold shadow-sm"
-                        : "text-slate-muted hover:text-navy hover:bg-slate-50"
-                    }`}
-                  >
-                    <SlidersHorizontal className="w-3.5 h-3.5" />
-                    <span>Ops</span>
-                  </Link>
-                  <Link
-                    href="/admin/strategies"
-                    className={`px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1 ${
-                      pathname === "/admin/strategies"
-                        ? "bg-navy text-white font-bold shadow-sm"
-                        : "text-slate-muted hover:text-navy hover:bg-slate-50"
-                    }`}
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                    <span>Bots</span>
-                  </Link>
-                  <Link
-                    href="/admin/backtest"
-                    className={`px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1 ${
-                      pathname === "/admin/backtest"
-                        ? "bg-navy text-white font-bold shadow-sm"
-                        : "text-slate-muted hover:text-navy hover:bg-slate-50"
-                    }`}
-                  >
-                    <FlaskConical className="w-3.5 h-3.5" />
-                    <span>Backtest</span>
-                  </Link>
-                </div>
-              )}
             </nav>
           )}
         </div>
@@ -111,21 +61,6 @@ export default function Navbar() {
         <div className="flex items-center gap-3">
           {isAuthenticated && user ? (
             <div className="flex items-center gap-2.5">
-              {/* Django Admin direct link for staff */}
-              {user.is_staff && (
-                <a
-                  href="http://localhost:8000/admin/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-tech-blue-light text-tech-blue border border-tech-blue/20 hover:bg-tech-blue/20 transition-colors"
-                  title="Abrir Django Admin"
-                >
-                  <Settings className="w-3.5 h-3.5" />
-                  <span>Django Admin</span>
-                  <ExternalLink className="w-3 h-3 opacity-70" />
-                </a>
-              )}
-
               {/* User badge */}
               <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-subtle rounded-xl text-xs shadow-card-subtle">
                 <div className="w-2 h-2 rounded-full bg-emerald-success animate-pulse" />

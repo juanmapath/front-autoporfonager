@@ -237,11 +237,11 @@ function AllocationsContent() {
       <div className="bg-white border border-slate-subtle p-6 rounded-2xl shadow-card-subtle flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <Link
-            href="/portfolios"
+            href="/"
             className="inline-flex items-center gap-1.5 text-xs font-bold text-tech-blue hover:underline mb-2"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Volver a Portafolios</span>
+            <span>Volver al Dashboard</span>
           </Link>
           <h1 className="font-heading font-extrabold text-2xl text-navy">
             Configuración y Asignación de Portafolio
@@ -270,7 +270,7 @@ function AllocationsContent() {
             </div>
 
             <Link
-              href="/portfolios"
+              href="/"
               className="flex items-center gap-1.5 text-xs font-bold text-tech-blue hover:underline bg-slate-50 px-3 py-2 rounded-xl border border-slate-subtle"
             >
               <Building2 className="w-3.5 h-3.5" />
