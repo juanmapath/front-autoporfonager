@@ -27,6 +27,14 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
+function clearStorage() {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem("autoportonager_token");
+    localStorage.removeItem("autoportonager_refresh");
+    localStorage.removeItem("autoportonager_user");
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -34,45 +42,113 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    // Restore session from localStorage
-    const savedToken = localStorage.getItem("autoportonager_token");
-    const savedUser = localStorage.getItem("autoportonager_user");
+    let isMounted = true;
 
-    if (savedToken && savedUser) {
-      try {
-        const parsed = JSON.parse(savedUser);
-        setToken(savedToken);
-        setUser(parsed);
+    const verifyAndRestoreSession = async () => {
+      const savedToken = localStorage.getItem("autoportonager_token");
+      const savedRefresh = localStorage.getItem("autoportonager_refresh");
+      const savedUser = localStorage.getItem("autoportonager_user");
 
-        // Background sync with /me/ to keep is_staff and plan live without requiring logout/login
-        fetch(`${API_BASE}/me/`, {
-          headers: { Authorization: `Bearer ${savedToken}` },
-        })
-          .then((res) => (res.ok ? res.json() : null))
-          .then((meData) => {
-            if (meData) {
-              const updatedUser: User = {
-                id: parsed.id || 1,
-                email: meData.email,
-                username: meData.username,
-                is_staff: Boolean(meData.is_staff),
-                is_superuser: Boolean(meData.is_superuser || meData.is_staff),
-                timezone: meData.timezone || "America/Bogota",
-                plan: meData.plan?.name || "Default",
-              };
-              setUser(updatedUser);
-              localStorage.setItem("autoportonager_user", JSON.stringify(updatedUser));
-            }
-          })
-          .catch(() => {});
-      } catch (e) {
-        console.error("Failed to parse saved user", e);
-        localStorage.removeItem("autoportonager_token");
-        localStorage.removeItem("autoportonager_user");
+      if (!savedToken || !savedUser) {
+        if (isMounted) setLoading(false);
+        return;
       }
-    }
-    setLoading(false);
-  }, []);
+
+      let parsedUser: User | null = null;
+      try {
+        parsedUser = JSON.parse(savedUser);
+      } catch {
+        clearStorage();
+        if (isMounted) setLoading(false);
+        return;
+      }
+
+      try {
+        let currentToken = savedToken;
+        let res = await fetch(`${API_BASE}/me/`, {
+          headers: { Authorization: `Bearer ${currentToken}` },
+        });
+
+        // If access token is expired (401), attempt refresh with saved refresh token
+        if (res.status === 401 && savedRefresh) {
+          const refreshRes = await fetch(`${API_BASE}/auth/refresh/`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ refresh: savedRefresh }),
+          });
+
+          if (refreshRes.ok) {
+            const refreshData = await refreshRes.json();
+            if (refreshData.access) {
+              currentToken = refreshData.access;
+              localStorage.setItem("autoportonager_token", currentToken);
+              if (refreshData.refresh) {
+                localStorage.setItem("autoportonager_refresh", refreshData.refresh);
+              }
+              // Retry /me/ with newly refreshed access token
+              res = await fetch(`${API_BASE}/me/`, {
+                headers: { Authorization: `Bearer ${currentToken}` },
+              });
+            }
+          }
+        }
+
+        if (res.ok) {
+          const meData = await res.json();
+          const updatedUser: User = {
+            id: meData.id || parsedUser?.id || 1,
+            email: meData.email,
+            username: meData.username,
+            is_staff: Boolean(meData.is_staff),
+            is_superuser: Boolean(meData.is_superuser || meData.is_staff),
+            timezone: meData.timezone || "America/Bogota",
+            plan: meData.plan?.name || "PRO",
+          };
+
+          if (isMounted) {
+            setToken(currentToken);
+            setUser(updatedUser);
+            localStorage.setItem("autoportonager_user", JSON.stringify(updatedUser));
+          }
+        } else if (res.status === 401 || res.status === 403) {
+          // Token is dead and refresh failed/expired: Purge session completely so Landing is shown
+          clearStorage();
+          if (isMounted) {
+            setUser(null);
+            setToken(null);
+          }
+        }
+      } catch (e) {
+        console.warn("Error verifying auth session with backend:", e);
+        // On connection failure with unverified tokens, clear to prevent false logged-in state
+        clearStorage();
+        if (isMounted) {
+          setUser(null);
+          setToken(null);
+        }
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    verifyAndRestoreSession();
+
+    // Listen for global session expiry events (triggered by 401 in fetchApi)
+    const handleSessionExpired = () => {
+      clearStorage();
+      if (isMounted) {
+        setUser(null);
+        setToken(null);
+        router.push("/");
+      }
+    };
+
+    window.addEventListener("autoportonager:session_expired", handleSessionExpired);
+    return () => {
+      isMounted = false;
+      window.removeEventListener("autoportonager:session_expired", handleSessionExpired);
+    };
+  }, [router]);
 
   const login = async (email: string, pass: string) => {
     try {
@@ -129,12 +205,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = () => {
+    clearStorage();
     setUser(null);
     setToken(null);
-    localStorage.removeItem("autoportonager_token");
-    localStorage.removeItem("autoportonager_refresh");
-    localStorage.removeItem("autoportonager_user");
-    router.push("/login");
+    router.push("/");
   };
 
   return (

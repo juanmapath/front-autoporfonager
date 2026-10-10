@@ -63,9 +63,15 @@ interface BacktestResponse {
   id: number;
   strategy_slug: string;
   symbol: string;
+  bot_type?: string;
   start_date: string;
   end_date: string;
   initial_capital: string | number;
+  total_invested?: number;
+  periodic_deposit?: number;
+  deposit_frequency?: string;
+  accumulated_shares?: number;
+  cash_remaining?: number;
   status: string;
   metrics: {
     roi_pct: number;
@@ -82,11 +88,18 @@ interface BacktestResponse {
     benchmark_cagr_pct: number;
     benchmark_max_drawdown_pct: number;
     alpha_vs_benchmark: number;
+    total_invested?: number;
+    periodic_deposit?: number;
+    deposit_frequency?: string;
+    deposits_count?: number;
+    accumulated_shares?: number;
+    cash_remaining?: number;
   };
   equity_curve: Array<{
     date: string;
     strategy_value: number;
     benchmark_value: number;
+    invested_capital?: number;
   }>;
   trades?: Trade[];
   trade_markers?: TradeMarker[];
@@ -114,6 +127,10 @@ export default function BacktestLabPage() {
   const [signalSymbol, setSignalSymbol] = useState<string>("TLT");
   const [selectedStrats, setSelectedStrats] = useState<StrategySlot[]>([]);
   const [capital, setCapital] = useState<number>(100000);
+
+  // Smart Accumulator DCA Parameters
+  const [periodicDeposit, setPeriodicDeposit] = useState<number>(500);
+  const [depositFrequency, setDepositFrequency] = useState<"monthly" | "weekly">("monthly");
 
   // Leverage Parameters
   const [leverage, setLeverage] = useState<number>(1.0); // Base leverage
@@ -151,8 +168,18 @@ export default function BacktestLabPage() {
     fetchApi("/ops/strategies/")
       .then((data) => {
         if (data) {
-          const strats = data.strategies || [];
-          const bTypes = data.bot_types || {};
+          // Filter out bot types not supported for backtest (ranked_allocation and hold)
+          const allStrats = data.strategies || [];
+          const strats = allStrats.filter((s: any) => s.kind !== "ranked_allocation" && s.kind !== "hold");
+          
+          const rawBTypes = data.bot_types || {};
+          const bTypes: Record<string, any> = {};
+          Object.keys(rawBTypes).forEach((k) => {
+            if (k !== "ranked_allocation" && k !== "hold") {
+              bTypes[k] = rawBTypes[k];
+            }
+          });
+
           const cat = data.strategies_catalog || {};
 
           setDbStrategies(strats);
@@ -204,6 +231,10 @@ export default function BacktestLabPage() {
     setLeverage(params.leverage || 1.0);
     setMaxLeverage(params.max_leverage || params.leverage || 2.0);
     setUseDynamicLeverage(params.use_regimes !== undefined ? params.use_regimes : true);
+    if (bot.kind === "smart_accumulator") {
+      setPeriodicDeposit(params.periodic_deposit !== undefined ? params.periodic_deposit : 500);
+      setDepositFrequency(params.deposit_frequency || "monthly");
+    }
 
     const configStrats = params.strategies || [];
     if (configStrats.length > 0) {
@@ -320,18 +351,24 @@ export default function BacktestLabPage() {
       };
     });
 
+    const isAccumulator = botType === "smart_accumulator";
     const payload: any = {
       start_date: startDate,
       end_date: endDate,
       initial_capital: capital,
-      leverage: leverage,
-      max_leverage: maxLeverage,
-      use_dynamic_leverage: useDynamicLeverage,
+      leverage: isAccumulator ? 1.0 : leverage,
+      max_leverage: isAccumulator ? 1.0 : maxLeverage,
+      use_dynamic_leverage: isAccumulator ? false : useDynamicLeverage,
       bot_type: botType,
       traded_symbol: tradedSymbol.trim().toUpperCase(),
       signal_symbol: botType === "cross_asset" ? signalSymbol.trim().toUpperCase() : undefined,
       strategies: formattedStrategies,
     };
+
+    if (isAccumulator) {
+      payload.periodic_deposit = Number(periodicDeposit) || 0;
+      payload.deposit_frequency = depositFrequency;
+    }
 
     if (mode === "db_bot" && selectedBotId) {
       payload.strategy_id = selectedBotId;
@@ -552,73 +589,126 @@ export default function BacktestLabPage() {
           </div>
         </div>
 
-        {/* Row 2: Leverage Configuration (Base, Max, Dynamic Walk-Forward Toggle) */}
-        <div className="bg-slate-canvas/80 p-4 rounded-xl border border-slate-subtle space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-subtle pb-2">
-            <span className="text-xs font-bold text-navy flex items-center gap-1.5">
-              <Gauge className="w-3.5 h-3.5 text-tech-blue" />
-              <span>Gestión de Apalancamiento y Regímenes de Riesgo</span>
-            </span>
-            <span className="text-[10px] text-slate-muted">Walk-Forward Kelly / Profit Factor</span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-center">
-            {/* Base Leverage */}
-            <div>
-              <label className="text-[11px] font-bold text-navy block mb-1">
-                Apalancamiento Base
-              </label>
-              <select
-                value={leverage}
-                onChange={(e) => setLeverage(parseFloat(e.target.value))}
-                className="w-full bg-white border border-slate-subtle text-navy font-bold text-xs rounded-xl p-2.5 focus:outline-none focus:border-tech-blue"
-              >
-                <option value={1.0}>1.0x (Spot sin deuda)</option>
-                <option value={1.25}>1.25x</option>
-                <option value={1.5}>1.5x (Margen moderado)</option>
-                <option value={2.0}>2.0x (Margen 2x)</option>
-                <option value={3.0}>3.0x (Apalancamiento alto)</option>
-              </select>
+        {/* Row 2: Leverage Configuration or Smart Accumulator DCA Panel */}
+        {botType === "smart_accumulator" ? (
+          <div className="bg-tech-blue/5 p-4 rounded-xl border border-tech-blue/20 space-y-3">
+            <div className="flex items-center justify-between border-b border-tech-blue/20 pb-2">
+              <span className="text-xs font-bold text-navy flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-tech-blue" />
+                <span>Plan de Inyección de Capital Periódico (Smart Accumulator / DCA Cuantitativo)</span>
+              </span>
+              <span className="text-[10px] text-tech-blue font-bold">Inversión Periódica + Compras en Dips</span>
             </div>
 
-            {/* Max Leverage */}
-            <div>
-              <label className="text-[11px] font-bold text-navy block mb-1">
-                Apalancamiento Máximo (Techo)
-              </label>
-              <select
-                value={maxLeverage}
-                onChange={(e) => setMaxLeverage(parseFloat(e.target.value))}
-                className="w-full bg-white border border-slate-subtle text-navy font-bold text-xs rounded-xl p-2.5 focus:outline-none focus:border-tech-blue"
-              >
-                <option value={1.0}>1.0x (Sin techo extra)</option>
-                <option value={1.5}>1.5x</option>
-                <option value={2.0}>2.0x</option>
-                <option value={2.5}>2.5x</option>
-                <option value={3.0}>3.0x</option>
-                <option value={4.0}>4.0x</option>
-              </select>
-            </div>
-
-            {/* Dynamic Leverage Toggle */}
-            <div className="bg-white p-3 rounded-xl border border-slate-subtle/90 flex items-center justify-between gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
               <div>
-                <label className="text-[11px] font-bold text-navy block">
-                  Apalancamiento Dinámico
+                <label className="text-[11px] font-bold text-navy block mb-1">
+                  Aporte Periódico de Capital ($ USD)
                 </label>
-                <p className="text-[10px] text-slate-muted leading-tight mt-0.5">
-                  Escala hacia el techo si Profit Factor ≥ 1.5, y reduce a 1.0x en drawdowns.
-                </p>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-muted font-bold text-xs">$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="50"
+                    value={periodicDeposit}
+                    onChange={(e) => setPeriodicDeposit(parseFloat(e.target.value) || 0)}
+                    placeholder="Ej. 500"
+                    className="w-full bg-white border border-slate-subtle text-navy font-bold text-xs rounded-xl pl-7 pr-3 py-2.5 focus:outline-none focus:border-tech-blue"
+                  />
+                </div>
               </div>
-              <input
-                type="checkbox"
-                checked={useDynamicLeverage}
-                onChange={(e) => setUseDynamicLeverage(e.target.checked)}
-                className="w-5 h-5 accent-tech-blue rounded cursor-pointer"
-              />
+
+              <div>
+                <label className="text-[11px] font-bold text-navy block mb-1">
+                  Frecuencia del Aporte
+                </label>
+                <select
+                  value={depositFrequency}
+                  onChange={(e) => setDepositFrequency(e.target.value as "monthly" | "weekly")}
+                  className="w-full bg-white border border-slate-subtle text-navy font-bold text-xs rounded-xl p-2.5 focus:outline-none focus:border-tech-blue"
+                >
+                  <option value="monthly">Mensual (1er día hábil del mes)</option>
+                  <option value="weekly">Semanal (Inicio de cada semana)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="bg-white/80 p-3 rounded-lg border border-slate-subtle text-[11px] text-slate-600 flex items-start gap-2">
+              <HelpCircle className="w-4 h-4 text-tech-blue flex-shrink-0 mt-0.5" />
+              <p>
+                <strong>Mecánica de Acumulación DCA:</strong> En cada período se suma este aporte a la liquidez en caja. El bot <strong>nunca vende</strong> en señales neutras o de salida; mantiene las acciones acumuladas y ejecuta compras únicamente cuando la estrategia cuantitativa detecta oportunidades o caídas. El resultado se evalúa contra un <strong>DCA Pasivo</strong> (comprar en cada aporte ciegamente).
+              </p>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="bg-slate-canvas/80 p-4 rounded-xl border border-slate-subtle space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-subtle pb-2">
+              <span className="text-xs font-bold text-navy flex items-center gap-1.5">
+                <Gauge className="w-3.5 h-3.5 text-tech-blue" />
+                <span>Gestión de Apalancamiento y Regímenes de Riesgo</span>
+              </span>
+              <span className="text-[10px] text-slate-muted">Walk-Forward Kelly / Profit Factor</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-center">
+              {/* Base Leverage */}
+              <div>
+                <label className="text-[11px] font-bold text-navy block mb-1">
+                  Apalancamiento Base
+                </label>
+                <select
+                  value={leverage}
+                  onChange={(e) => setLeverage(parseFloat(e.target.value))}
+                  className="w-full bg-white border border-slate-subtle text-navy font-bold text-xs rounded-xl p-2.5 focus:outline-none focus:border-tech-blue"
+                >
+                  <option value={1.0}>1.0x (Spot sin deuda)</option>
+                  <option value={1.25}>1.25x</option>
+                  <option value={1.5}>1.5x (Margen moderado)</option>
+                  <option value={2.0}>2.0x (Margen 2x)</option>
+                  <option value={3.0}>3.0x (Apalancamiento alto)</option>
+                </select>
+              </div>
+
+              {/* Max Leverage */}
+              <div>
+                <label className="text-[11px] font-bold text-navy block mb-1">
+                  Apalancamiento Máximo (Techo)
+                </label>
+                <select
+                  value={maxLeverage}
+                  onChange={(e) => setMaxLeverage(parseFloat(e.target.value))}
+                  className="w-full bg-white border border-slate-subtle text-navy font-bold text-xs rounded-xl p-2.5 focus:outline-none focus:border-tech-blue"
+                >
+                  <option value={1.0}>1.0x (Sin techo extra)</option>
+                  <option value={1.5}>1.5x</option>
+                  <option value={2.0}>2.0x</option>
+                  <option value={2.5}>2.5x</option>
+                  <option value={3.0}>3.0x</option>
+                  <option value={4.0}>4.0x</option>
+                </select>
+              </div>
+
+              {/* Dynamic Leverage Toggle */}
+              <div className="bg-white p-3 rounded-xl border border-slate-subtle/90 flex items-center justify-between gap-3">
+                <div>
+                  <label className="text-[11px] font-bold text-navy block">
+                    Apalancamiento Dinámico
+                  </label>
+                  <p className="text-[10px] text-slate-muted leading-tight mt-0.5">
+                    Escala hacia el techo si Profit Factor ≥ 1.5, y reduce a 1.0x en drawdowns.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={useDynamicLeverage}
+                  onChange={(e) => setUseDynamicLeverage(e.target.checked)}
+                  className="w-5 h-5 accent-tech-blue rounded cursor-pointer"
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Row 3: Free Ticker Input & Popular Tickers Chips */}
         <div className="bg-slate-canvas/60 p-4 rounded-xl border border-slate-subtle space-y-3">
@@ -855,76 +945,113 @@ export default function BacktestLabPage() {
       {result && result.metrics && (
         <div className="space-y-6">
           {/* Executive Summary Banner */}
-          <div className="bg-gradient-to-r from-navy via-navy-light to-navy border border-navy text-white p-6 rounded-2xl shadow-card flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] uppercase tracking-wider text-tech-blue-light font-bold">
-                  Simulación Cuantitativa Completada
-                </span>
-                <span className="bg-white/10 text-white text-[10px] px-2 py-0.5 rounded-full font-mono">
-                  {result.start_date} → {result.end_date}
-                </span>
-                {result.applied_leverage?.use_dynamic_leverage && (
-                  <span className="bg-tech-blue/30 text-tech-blue-light text-[10px] px-2 py-0.5 rounded-full font-bold border border-tech-blue/40">
-                    DYNAMIC LEVERAGE {result.applied_leverage.base_leverage}x → {result.applied_leverage.max_leverage}x
-                  </span>
-                )}
-              </div>
-              <h2 className="text-2xl font-bold font-heading">
-                Activo: {result.symbol} | Estrategia: {result.strategy_slug}
-              </h2>
-              <div className="flex flex-wrap items-center gap-4 text-xs text-slate-300 pt-1">
-                <span>
-                  Capital Inicial:{" "}
-                  <strong className="text-white font-mono">
-                    ${Number(result.initial_capital).toLocaleString()}
-                  </strong>
-                </span>
-                <span>•</span>
-                <span>
-                  Valor Final Bot:{" "}
-                  <strong className="text-emerald-400 font-mono">
-                    ${result.metrics.final_value?.toLocaleString()}
-                  </strong>
-                </span>
-                <span>•</span>
-                <span>
-                  Benchmark Buy & Hold:{" "}
-                  <strong className="text-amber-300 font-mono">
-                    ${result.metrics.benchmark_final_value?.toLocaleString()}
-                  </strong>
-                </span>
-              </div>
-            </div>
+          {(() => {
+            const isAcc =
+              result.bot_type === "smart_accumulator" ||
+              (result.metrics?.periodic_deposit !== undefined &&
+                (result.metrics?.periodic_deposit > 0 || result.metrics?.accumulated_shares !== undefined));
+            const benchLabel = isAcc ? "Benchmark DCA Pasivo" : "Benchmark Buy & Hold";
+            const alphaLabel = isAcc ? "Alpha vs DCA Pasivo" : "Alpha vs Buy & Hold";
 
-            <div className="flex flex-wrap items-center gap-3">
-              <div
-                className={`px-4 py-3 rounded-xl border flex flex-col items-center justify-center text-center ${
-                  result.metrics.alpha_vs_benchmark >= 0
-                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
-                    : "bg-red-500/10 border-red-500/30 text-red-300"
-                }`}
-              >
-                <span className="text-[10px] font-bold uppercase tracking-wider">Alpha vs Buy & Hold</span>
-                <span className="text-xl font-extrabold font-mono">
-                  {result.metrics.alpha_vs_benchmark >= 0 ? "+" : ""}
-                  {result.metrics.alpha_vs_benchmark}%
-                </span>
-              </div>
+            return (
+              <div className="bg-gradient-to-r from-navy via-navy-light to-navy border border-navy text-white p-6 rounded-2xl shadow-card flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] uppercase tracking-wider text-tech-blue-light font-bold">
+                      {isAcc ? "Simulación DCA Inteligente Completada" : "Simulación Cuantitativa Completada"}
+                    </span>
+                    <span className="bg-white/10 text-white text-[10px] px-2 py-0.5 rounded-full font-mono">
+                      {result.start_date} → {result.end_date}
+                    </span>
+                    {isAcc ? (
+                      <span className="bg-tech-blue/30 text-tech-blue-light text-[10px] px-2 py-0.5 rounded-full font-bold border border-tech-blue/40">
+                        SMART ACCUMULATOR (DCA)
+                      </span>
+                    ) : result.applied_leverage?.use_dynamic_leverage ? (
+                      <span className="bg-tech-blue/30 text-tech-blue-light text-[10px] px-2 py-0.5 rounded-full font-bold border border-tech-blue/40">
+                        DYNAMIC LEVERAGE {result.applied_leverage.base_leverage}x → {result.applied_leverage.max_leverage}x
+                      </span>
+                    ) : null}
+                  </div>
+                  <h2 className="text-2xl font-bold font-heading">
+                    Activo: {result.symbol} | Estrategia: {result.strategy_slug}
+                  </h2>
+                  <div className="flex flex-wrap items-center gap-4 text-xs text-slate-300 pt-1">
+                    <span>
+                      {isAcc ? "Capital Total Aportado: " : "Capital Inicial: "}
+                      <strong className="text-white font-mono">
+                        ${Number(result.metrics?.total_invested || result.total_invested || result.initial_capital).toLocaleString()}
+                      </strong>
+                    </span>
+                    <span>•</span>
+                    <span>
+                      Valor Final Bot:{" "}
+                      <strong className="text-emerald-400 font-mono">
+                        ${result.metrics.final_value?.toLocaleString()}
+                      </strong>
+                    </span>
+                    <span>•</span>
+                    <span>
+                      {benchLabel}:{" "}
+                      <strong className="text-amber-300 font-mono">
+                        ${result.metrics.benchmark_final_value?.toLocaleString()}
+                      </strong>
+                    </span>
+                    {isAcc && result.metrics?.accumulated_shares !== undefined && (
+                      <>
+                        <span>•</span>
+                        <span>
+                          Acciones Acumuladas:{" "}
+                          <strong className="text-cyan-300 font-mono">
+                            {result.metrics.accumulated_shares}
+                          </strong>
+                        </span>
+                      </>
+                    )}
+                    {isAcc && result.metrics?.cash_remaining !== undefined && (
+                      <>
+                        <span>•</span>
+                        <span>
+                          Caja Remanente:{" "}
+                          <strong className="text-slate-200 font-mono">
+                            ${Number(result.metrics.cash_remaining).toLocaleString()}
+                          </strong>
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
 
-              <div className="px-4 py-3 rounded-xl bg-white/5 border border-white/10 flex flex-col items-center justify-center text-center">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-300">
-                  Protección Drawdown
-                </span>
-                <span className="text-xl font-extrabold font-mono text-white">
-                  {Math.abs(result.metrics.max_drawdown_pct)}% vs{" "}
-                  <span className="text-slate-400">
-                    {Math.abs(result.metrics.benchmark_max_drawdown_pct)}%
-                  </span>
-                </span>
+                <div className="flex flex-wrap items-center gap-3">
+                  <div
+                    className={`px-4 py-3 rounded-xl border flex flex-col items-center justify-center text-center ${
+                      result.metrics.alpha_vs_benchmark >= 0
+                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                        : "bg-red-500/10 border-red-500/30 text-red-300"
+                    }`}
+                  >
+                    <span className="text-[10px] font-bold uppercase tracking-wider">{alphaLabel}</span>
+                    <span className="text-xl font-extrabold font-mono">
+                      {result.metrics.alpha_vs_benchmark >= 0 ? "+" : ""}
+                      {result.metrics.alpha_vs_benchmark}%
+                    </span>
+                  </div>
+
+                  <div className="px-4 py-3 rounded-xl bg-white/5 border border-white/10 flex flex-col items-center justify-center text-center">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-300">
+                      Protección Drawdown
+                    </span>
+                    <span className="text-xl font-extrabold font-mono text-white">
+                      {Math.abs(result.metrics.max_drawdown_pct)}% vs{" "}
+                      <span className="text-slate-400">
+                        {Math.abs(result.metrics.benchmark_max_drawdown_pct)}%
+                      </span>
+                    </span>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+            );
+          })()}
 
           {/* Comparative Metrics KPI Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -935,7 +1062,7 @@ export default function BacktestLabPage() {
                   Retorno (ROI)
                 </span>
                 <span className="text-[9px] text-slate-muted font-mono">
-                  B&H: {result.metrics.benchmark_roi_pct}%
+                  {result.bot_type === "smart_accumulator" || result.metrics?.periodic_deposit !== undefined ? "DCA:" : "B&H:"} {result.metrics.benchmark_roi_pct}%
                 </span>
               </div>
               <div
@@ -955,7 +1082,7 @@ export default function BacktestLabPage() {
                   CAGR Anual
                 </span>
                 <span className="text-[9px] text-slate-muted font-mono">
-                  B&H: {result.metrics.benchmark_cagr_pct}%
+                  {result.bot_type === "smart_accumulator" || result.metrics?.periodic_deposit !== undefined ? "DCA:" : "B&H:"} {result.metrics.benchmark_cagr_pct}%
                 </span>
               </div>
               <div
@@ -975,7 +1102,7 @@ export default function BacktestLabPage() {
                   Max Drawdown
                 </span>
                 <span className="text-[9px] text-slate-muted font-mono">
-                  B&H: {result.metrics.benchmark_max_drawdown_pct}%
+                  {result.bot_type === "smart_accumulator" || result.metrics?.periodic_deposit !== undefined ? "DCA:" : "B&H:"} {result.metrics.benchmark_max_drawdown_pct}%
                 </span>
               </div>
               <div className="text-xl font-bold font-mono text-red-600">
@@ -998,10 +1125,10 @@ export default function BacktestLabPage() {
               </div>
             </div>
 
-            {/* Win Rate */}
+            {/* Win Rate / Lotes Ganadores */}
             <div className="bg-white border border-slate-subtle p-4 rounded-2xl shadow-card-subtle space-y-1">
               <span className="text-[10px] text-slate-muted uppercase font-bold tracking-wider">
-                Win Rate
+                {result.bot_type === "smart_accumulator" || result.metrics?.periodic_deposit !== undefined ? "Lotes Ganadores" : "Win Rate"}
               </span>
               <div className="text-xl font-bold font-mono text-navy">
                 {result.metrics.win_rate_pct}%
@@ -1015,7 +1142,7 @@ export default function BacktestLabPage() {
                   Profit Factor
                 </span>
                 <span className="text-[9px] text-slate-muted font-mono">
-                  {result.metrics.total_trades} trades
+                  {result.metrics.total_trades} {result.bot_type === "smart_accumulator" || result.metrics?.periodic_deposit !== undefined ? "compras" : "trades"}
                 </span>
               </div>
               <div className="text-xl font-bold font-mono text-navy">
@@ -1383,7 +1510,7 @@ export default function BacktestLabPage() {
                           <td className="py-2.5 px-3 text-center">
                             {trade.open ? (
                               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-tech-blue-light text-tech-blue border border-tech-blue/20">
-                                ABIERTO
+                                {trade.exit_strategy === "Acumulado (Hold)" ? "ACUMULADO" : "ABIERTO"}
                               </span>
                             ) : isWin ? (
                               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">

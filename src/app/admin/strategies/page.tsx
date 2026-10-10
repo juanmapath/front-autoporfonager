@@ -43,6 +43,23 @@ export default function AdminStrategiesPage() {
     Array<{ strategy_name: string; params: Record<string, number> }>
   >([]);
 
+  // Ranked Allocation state
+  const [metricsCatalog, setMetricsCatalog] = useState<Array<any>>([]);
+  const [rankedSymbols, setRankedSymbols] = useState<string[]>(["AAPL", "MSFT", "GOOGL", "NVDA"]);
+  const [selectedMetrics, setSelectedMetrics] = useState<Array<{ key: string; weight: number }>>([
+    { key: "roic", weight: 0.6 },
+    { key: "per", weight: 0.4 },
+  ]);
+  const [rankWeights, setRankWeights] = useState<number[]>([40, 30, 20, 10]); // percentages (sum=100)
+  const [rankedExecMode, setRankedExecMode] = useState<"hold" | "strategy">("hold");
+  const [rankedSubStrategy, setRankedSubStrategy] = useState<string>("TrendFollowing_GoldCross");
+  const [rebalanceFreq, setRebalanceFreq] = useState<string>("monthly");
+
+  // Hold & Smart Accumulator state
+  const [isCashReserve, setIsCashReserve] = useState<boolean>(false);
+  const [participatesInRebalance, setParticipatesInRebalance] = useState<boolean>(true);
+  const [takeProfitPct, setTakeProfitPct] = useState<number>(0);
+
   useEffect(() => {
     loadStrategiesData();
   }, []);
@@ -53,6 +70,7 @@ export default function AdminStrategiesPage() {
         setStrategies(data.strategies || []);
         setBotTypes(data.bot_types || {});
         setStrategiesCatalog(data.strategies_catalog || {});
+        setMetricsCatalog(data.metrics_catalog || []);
       }
     });
   };
@@ -237,14 +255,50 @@ export default function AdminStrategiesPage() {
       name: botName,
       family: botFamily,
       bot_type: botType,
-      traded_symbol: tradedSymbol.toUpperCase(),
-      signal_symbol: botType === "cross_asset" ? signalSymbol.toUpperCase() : undefined,
-      strategies: formattedStrategies,
+      decision_offset_minutes: 25,
       leverage: leverage,
       max_leverage: maxLeverage,
       use_regimes: useRegimes,
-      decision_offset_minutes: 25,
     };
+
+    if (botType === "ranked_allocation") {
+      const symbolsClean = rankedSymbols.map((s) => s.trim().toUpperCase()).filter(Boolean);
+      if (symbolsClean.length < 2) {
+        setError("Debes ingresar al menos 2 activos para el ranking.");
+        return;
+      }
+      if (selectedMetrics.length === 0) {
+        setError("Debes seleccionar al menos 1 métrica.");
+        return;
+      }
+      const sumW = rankWeights.reduce((a, b) => a + b, 0);
+      if (Math.abs(sumW - 100) > 0.5) {
+        setError(`La suma de las ponderaciones de ranking debe ser 100% (suma actual: ${sumW}%).`);
+        return;
+      }
+
+      payload.traded_symbols = symbolsClean;
+      payload.metrics = selectedMetrics;
+      payload.rank_weights = rankWeights.map((w) => Number((w / 100).toFixed(4)));
+      payload.rebalance_frequency = rebalanceFreq;
+      payload.execution = {
+        mode: rankedExecMode,
+        strategy_name: rankedExecMode === "strategy" ? rankedSubStrategy : null,
+      };
+    } else if (botType === "hold") {
+      payload.traded_symbol = isCashReserve ? "CASH" : tradedSymbol.toUpperCase();
+      payload.is_cash = isCashReserve;
+      payload.participates_in_rebalance = participatesInRebalance;
+      payload.strategies = [];
+    } else if (botType === "smart_accumulator") {
+      payload.traded_symbol = tradedSymbol.toUpperCase();
+      payload.strategies = formattedStrategies;
+      payload.take_profit_pct = takeProfitPct > 0 ? takeProfitPct / 100 : null;
+    } else {
+      payload.traded_symbol = tradedSymbol.toUpperCase();
+      payload.signal_symbol = botType === "cross_asset" ? signalSymbol.toUpperCase() : undefined;
+      payload.strategies = formattedStrategies;
+    }
 
     try {
       if (editingBot) {
@@ -629,61 +683,364 @@ export default function AdminStrategiesPage() {
                   </div>
                 </div>
 
-                {/* Instruments Selection */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-subtle">
-                  <div>
-                    <label className="text-xs text-navy font-bold block mb-1">
-                      Activo Principal a Operar (Traded Asset)
-                    </label>
-                    <input
-                      type="text"
-                      required={botTypes[botType]?.requires_traded_asset}
-                      placeholder="Ej. TQQQ, SPY, AAPL"
-                      value={tradedSymbol}
-                      onChange={(e) => setTradedSymbol(e.target.value.toUpperCase())}
-                      className="w-full bg-white border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
-                    />
-                  </div>
-
-                  {botType === "cross_asset" && (
+                {/* Instruments & Logic Selection based on botType */}
+                {botType === "ranked_allocation" ? (
+                  <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-subtle">
+                    {/* 1. Multi-Assets Input */}
+                    {/* 1. Multi-Assets Input (Individual inputs with '+' and trash buttons) */}
                     <div>
-                      <label className="text-xs text-navy font-bold block mb-1">
-                        Activo de Señales (Signal Source Asset)
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="Ej. TLT, QQQ, ^VIX"
-                        value={signalSymbol}
-                        onChange={(e) => setSignalSymbol(e.target.value.toUpperCase())}
-                        className="w-full bg-white border border-amber-300 text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-amber-500"
-                      />
-                      <span className="text-[10px] text-amber-700">
-                        Calcula las señales con este activo y opera en el de arriba.
-                      </span>
-                    </div>
-                  )}
-                </div>
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="text-xs text-navy font-bold">
+                          1. Universo de Activos ({rankedSymbols.length})
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRankedSymbols((prev) => {
+                              const updated = [...prev, ""];
+                              const eq = Math.floor(100 / updated.length);
+                              const rem = 100 - eq * updated.length;
+                              const newW = new Array(updated.length).fill(eq);
+                              newW[0] += rem;
+                              setRankWeights(newW);
+                              return updated;
+                            });
+                          }}
+                          className="text-tech-blue hover:text-navy text-xs font-bold flex items-center gap-1 bg-tech-blue/10 px-2 py-1 rounded-lg"
+                        >
+                          <PlusCircle className="w-3.5 h-3.5" /> Agregar Activo
+                        </button>
+                      </div>
 
-                {/* Quantitative Strategies Selection from Catalog */}
-                {botType !== "follow_price" &&
-                  botType !== "signal_dollar" &&
-                  botType !== "signal_options" && (
-                    <div className="space-y-3 pt-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                        {rankedSymbols.map((sym, sIdx) => (
+                          <div key={sIdx} className="flex items-center gap-1 bg-white p-1.5 rounded-xl border border-slate-subtle">
+                            <input
+                              type="text"
+                              placeholder="Ej. AAPL"
+                              value={sym}
+                              onChange={(e) => {
+                                const val = e.target.value.toUpperCase();
+                                setRankedSymbols((prev) => prev.map((item, i) => (i === sIdx ? val : item)));
+                              }}
+                              className="w-full bg-transparent text-navy font-mono font-bold text-xs px-1.5 py-1 uppercase focus:outline-none"
+                            />
+                            {rankedSymbols.length > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRankedSymbols((prev) => {
+                                    const updated = prev.filter((_, i) => i !== sIdx);
+                                    if (updated.length > 0) {
+                                      const eq = Math.floor(100 / updated.length);
+                                      const rem = 100 - eq * updated.length;
+                                      const newW = new Array(updated.length).fill(eq);
+                                      newW[0] += rem;
+                                      setRankWeights(newW);
+                                    }
+                                    return updated;
+                                  });
+                                }}
+                                className="text-red-400 hover:text-red-600 p-1"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 2. Metrics & Weights Selection */}
+                    <div className="space-y-2">
                       <div className="flex justify-between items-center">
                         <label className="text-xs text-navy font-bold">
-                          2. Estrategias Cuantitativas ({selectedStrats.length})
+                          2. Métricas Cuantitativas / Fundamentales ({selectedMetrics.length})
                         </label>
-                        {botType === "multi_strategy" && (
-                          <button
-                            type="button"
-                            onClick={handleAddStrategySlot}
-                            className="text-tech-blue hover:text-navy text-xs font-bold flex items-center gap-1"
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const avail = metricsCatalog.find((m) => !selectedMetrics.some((sm) => sm.key === m.key));
+                            if (avail) {
+                              setSelectedMetrics((prev) => [...prev, { key: avail.key, weight: 1.0 }]);
+                            }
+                          }}
+                          className="text-tech-blue hover:text-navy text-xs font-bold flex items-center gap-1"
+                        >
+                          <PlusCircle className="w-3.5 h-3.5" /> Agregar Métrica
+                        </button>
+                      </div>
+
+                      {selectedMetrics.map((sm, mIdx) => {
+                        const mDef = metricsCatalog.find((m) => m.key === sm.key);
+                        return (
+                          <div key={mIdx} className="flex items-center gap-2 bg-white p-2.5 rounded-xl border border-slate-200">
+                            <select
+                              value={sm.key}
+                              onChange={(e) => {
+                                const newKey = e.target.value;
+                                setSelectedMetrics((prev) =>
+                                  prev.map((item, i) => (i === mIdx ? { ...item, key: newKey } : item))
+                                );
+                              }}
+                              className="flex-1 bg-transparent text-navy text-xs font-bold focus:outline-none"
+                            >
+                              {metricsCatalog.map((m) => (
+                                <option key={m.key} value={m.key}>
+                                  {m.label} ({m.direction === "asc" ? "Menor es mejor" : "Mayor es mejor"})
+                                </option>
+                              ))}
+                            </select>
+
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] text-slate-muted font-bold">Peso:</span>
+                              <input
+                                type="number"
+                                step="0.1"
+                                min="0.1"
+                                max="10.0"
+                                value={sm.weight}
+                                onChange={(e) => {
+                                  const w = parseFloat(e.target.value) || 1.0;
+                                  setSelectedMetrics((prev) =>
+                                    prev.map((item, i) => (i === mIdx ? { ...item, weight: w } : item))
+                                  );
+                                }}
+                                className="w-16 bg-slate-50 border border-slate-subtle text-navy text-xs font-mono font-bold rounded-lg p-1 text-center"
+                              />
+                            </div>
+
+                            {selectedMetrics.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedMetrics((prev) => prev.filter((_, i) => i !== mIdx))}
+                                className="text-red-500 hover:text-red-700 p-1"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* 3. Rank Capital Weights Allocation */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <label className="text-xs text-navy font-bold">
+                          3. Ponderación Libre por Puesto de Ranking
+                        </label>
+                        <span
+                          className={`text-xs font-mono font-bold ${
+                            rankWeights.reduce((a, b) => a + b, 0) === 100 ? "text-emerald-600" : "text-amber-600"
+                          }`}
+                        >
+                          Total: {rankWeights.reduce((a, b) => a + b, 0)}% / 100%
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {rankWeights.map((w, idx) => (
+                          <div key={idx} className="bg-white p-2 rounded-lg border border-slate-200">
+                            <label className="text-[10px] font-bold text-slate-muted block mb-1">
+                              Puesto #{idx + 1}
+                            </label>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={w}
+                                onChange={(e) => {
+                                  const val = Math.max(0, parseFloat(e.target.value) || 0);
+                                  setRankWeights((prev) => prev.map((item, i) => (i === idx ? val : item)));
+                                }}
+                                className="w-full bg-slate-50 border border-slate-subtle text-navy text-xs font-mono font-bold rounded p-1 text-center"
+                              />
+                              <span className="text-xs font-bold text-slate-500">%</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 4. Execution Mode: Direct Hold vs Underlying Strategy */}
+                    <div className="space-y-2 pt-2 border-t border-slate-200">
+                      <label className="text-xs text-navy font-bold block">
+                        4. Modo de Ejecución del Capital
+                      </label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setRankedExecMode("hold")}
+                          className={`p-3 rounded-xl border text-left transition-all ${
+                            rankedExecMode === "hold"
+                              ? "bg-tech-blue/10 border-tech-blue text-navy font-bold"
+                              : "bg-white border-slate-subtle text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          <div className="text-xs font-bold">Inversión Directa (Hold)</div>
+                          <div className="text-[10px] text-slate-muted mt-0.5">
+                            Compra y mantiene el activo con el peso asignado según el ranking.
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setRankedExecMode("strategy")}
+                          className={`p-3 rounded-xl border text-left transition-all ${
+                            rankedExecMode === "strategy"
+                              ? "bg-tech-blue/10 border-tech-blue text-navy font-bold"
+                              : "bg-white border-slate-subtle text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          <div className="text-xs font-bold">Estrategia Cuantitativa en Activo</div>
+                          <div className="text-[10px] text-slate-muted mt-0.5">
+                            Opera una estrategia en cada activo. Si da FLAT, la porción queda en Cash.
+                          </div>
+                        </button>
+                      </div>
+
+                      {rankedExecMode === "strategy" && (
+                        <div className="bg-white p-3 rounded-xl border border-tech-blue/30 mt-2">
+                          <label className="text-[11px] font-bold text-navy block mb-1">
+                            Estrategia a ejecutar en cada activo del ranking:
+                          </label>
+                          <select
+                            value={rankedSubStrategy}
+                            onChange={(e) => setRankedSubStrategy(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-subtle text-navy text-xs font-bold rounded-lg p-2"
                           >
-                            <PlusCircle className="w-3.5 h-3.5" /> Agregar Estrategia
-                          </button>
+                            {Object.entries(strategiesCatalog).map(([k, item]: [string, any]) => (
+                              <option key={k} value={k}>
+                                {item.name} [{item.category}]
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* Hold Bot Specific Configuration */}
+                    {botType === "hold" ? (
+                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-subtle space-y-4">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs text-navy font-bold">Tipo de Reserva / Posición</label>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setIsCashReserve(false)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                                !isCashReserve ? "bg-tech-blue text-white" : "bg-white border text-slate-600"
+                              }`}
+                            >
+                              Activo / Ticker
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setIsCashReserve(true)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                                isCashReserve ? "bg-emerald-600 text-white" : "bg-white border text-slate-600"
+                              }`}
+                            >
+                              Reserva de Cash
+                            </button>
+                          </div>
+                        </div>
+
+                        {!isCashReserve ? (
+                          <div>
+                            <label className="text-xs text-navy font-bold block mb-1">
+                              Activo a Mantener (Buy & Hold)
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="Ej. SPY, BTC, GLD, BIL"
+                              value={tradedSymbol}
+                              onChange={(e) => setTradedSymbol(e.target.value.toUpperCase())}
+                              className="w-full bg-white border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
+                            />
+                          </div>
+                        ) : (
+                          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs">
+                            💰 <strong>Reserva de Cash Líquido:</strong> Esta porción del portafolio se mantiene en dólares no invertidos en la cuenta del broker.
+                          </div>
+                        )}
+
+                        <div className="pt-2 border-t border-slate-200">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={participatesInRebalance}
+                              onChange={(e) => setParticipatesInRebalance(e.target.checked)}
+                              className="w-4 h-4 rounded text-tech-blue focus:ring-tech-blue"
+                            />
+                            <div>
+                              <span className="text-xs font-bold text-navy block">Participar en rebalanceos periódicos</span>
+                              <span className="text-[10px] text-slate-muted block">
+                                Si está desactivado, la posición queda congelada y nunca se vende ni compra por drift de mercado.
+                              </span>
+                            </div>
+                          </label>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Standard Traded / Cross-Asset Instruments Selection */
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-subtle">
+                        <div>
+                          <label className="text-xs text-navy font-bold block mb-1">
+                            Activo Principal a Operar (Traded Asset)
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="Ej. TQQQ, SPY, AAPL"
+                            value={tradedSymbol}
+                            onChange={(e) => setTradedSymbol(e.target.value.toUpperCase())}
+                            className="w-full bg-white border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
+                          />
+                        </div>
+
+                        {botType === "cross_asset" && (
+                          <div>
+                            <label className="text-xs text-navy font-bold block mb-1">
+                              Activo de Señales (Signal Source Asset)
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="Ej. TLT, QQQ, ^VIX"
+                              value={signalSymbol}
+                              onChange={(e) => setSignalSymbol(e.target.value.toUpperCase())}
+                              className="w-full bg-white border border-amber-300 text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-amber-500"
+                            />
+                            <span className="text-[10px] text-amber-700">
+                              Calcula las señales con este activo y opera en el de arriba.
+                            </span>
+                          </div>
                         )}
                       </div>
+                    )}
+
+                    {/* Quantitative Strategies Selection from Catalog (Not applicable for Hold Bot) */}
+                    {botType !== "hold" && (
+                      <div className="space-y-3 pt-2">
+                        <div className="flex justify-between items-center">
+                          <label className="text-xs text-navy font-bold">
+                            2. {botType === "smart_accumulator" ? "Estrategia Disparadora de Compras" : "Estrategias Cuantitativas"} ({selectedStrats.length})
+                          </label>
+                          {botType === "multi_strategy" && (
+                            <button
+                              type="button"
+                              onClick={handleAddStrategySlot}
+                              className="text-tech-blue hover:text-navy text-xs font-bold flex items-center gap-1"
+                            >
+                              <PlusCircle className="w-3.5 h-3.5" /> Agregar Estrategia
+                            </button>
+                          )}
+                        </div>
 
                       {selectedStrats.map((slot, idx) => {
                         const def = strategiesCatalog[slot.strategy_name];
@@ -758,6 +1115,8 @@ export default function AdminStrategiesPage() {
                       })}
                     </div>
                   )}
+                </>
+              )}
 
                 {/* Leverage & Macro Settings */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
