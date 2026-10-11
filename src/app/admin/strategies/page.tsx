@@ -52,7 +52,8 @@ export default function AdminStrategiesPage() {
   ]);
   const [rankWeights, setRankWeights] = useState<number[]>([40, 30, 20, 10]); // percentages (sum=100)
   const [rankedExecMode, setRankedExecMode] = useState<"hold" | "strategy">("hold");
-  const [rankedSubStrategy, setRankedSubStrategy] = useState<string>("TrendFollowing_GoldCross");
+  const [rankedSubStrategy, setRankedSubStrategy] = useState<string>("");
+  const [rankedSubParams, setRankedSubParams] = useState<Record<string, number>>({});
   const [rebalanceFreq, setRebalanceFreq] = useState<string>("monthly");
 
   // Hold & Smart Accumulator state
@@ -67,10 +68,23 @@ export default function AdminStrategiesPage() {
   const loadStrategiesData = () => {
     fetchApi("/ops/strategies/").then((data) => {
       if (data) {
+        const cat = data.strategies_catalog || {};
         setStrategies(data.strategies || []);
         setBotTypes(data.bot_types || {});
-        setStrategiesCatalog(data.strategies_catalog || {});
+        setStrategiesCatalog(cat);
         setMetricsCatalog(data.metrics_catalog || []);
+
+        const keys = Object.keys(cat);
+        if (keys.length > 0) {
+          const firstKey = keys[0];
+          const def = cat[firstKey];
+          const defParams: Record<string, number> = {};
+          def?.parameters?.forEach((p: any) => {
+            defParams[p.name] = p.default;
+          });
+          setRankedSubStrategy((prev) => prev || firstKey);
+          setRankedSubParams((prev) => (Object.keys(prev).length > 0 ? prev : defParams));
+        }
       }
     });
   };
@@ -95,6 +109,8 @@ export default function AdminStrategiesPage() {
         defaultParams[p.name] = p.default;
       });
       setSelectedStrats([{ strategy_name: firstKey, params: defaultParams }]);
+      setRankedSubStrategy(firstKey);
+      setRankedSubParams(defaultParams);
     } else {
       setSelectedStrats([]);
     }
@@ -120,6 +136,38 @@ export default function AdminStrategiesPage() {
     setLeverage(params.leverage || 1.0);
     setMaxLeverage(params.max_leverage || 1.0);
     setUseRegimes(params.use_regimes || false);
+
+    // Populate Ranked Allocation state if applicable
+    if (strat.kind === "ranked_allocation") {
+      const rSyms = instruments.filter((i: any) => i.role === "traded").map((i: any) => i.symbol);
+      if (rSyms.length > 0) setRankedSymbols(rSyms);
+      if (params.metrics && params.metrics.length > 0) setSelectedMetrics(params.metrics);
+      if (params.rank_weights && params.rank_weights.length > 0) {
+        setRankWeights(params.rank_weights.map((w: number) => Math.round(w * 100)));
+      }
+      if (params.rebalance_frequency) setRebalanceFreq(params.rebalance_frequency);
+
+      const exec = params.execution || {};
+      setRankedExecMode(exec.mode || "hold");
+      const subSName = exec.strategy_name || Object.keys(strategiesCatalog)[0] || "";
+      setRankedSubStrategy(subSName);
+      const subDef = strategiesCatalog[subSName];
+      const subParamMap: Record<string, number> = {};
+      const subParamArray = Array.isArray(exec.params) ? exec.params : [];
+      subDef?.parameters?.forEach((p: any, idx: number) => {
+        subParamMap[p.name] = subParamArray[idx] !== undefined ? subParamArray[idx] : p.default;
+      });
+      setRankedSubParams(subParamMap);
+    }
+
+    if (strat.kind === "hold") {
+      setIsCashReserve(Boolean(params.is_cash));
+      setParticipatesInRebalance(params.participates_in_rebalance !== false);
+    }
+
+    if (strat.kind === "smart_accumulator") {
+      setTakeProfitPct(params.take_profit_pct ? Math.round(params.take_profit_pct * 100) : 0);
+    }
 
     // Populate strategies slots
     const configStrats = params.strategies || [];
@@ -277,6 +325,12 @@ export default function AdminStrategiesPage() {
         return;
       }
 
+      const subDef = strategiesCatalog[rankedSubStrategy];
+      const subParamList = (subDef?.parameters || []).map((p: any) => {
+        const val = rankedSubParams[p.name];
+        return val !== undefined ? Number(val) : Number(p.default);
+      });
+
       payload.traded_symbols = symbolsClean;
       payload.metrics = selectedMetrics;
       payload.rank_weights = rankWeights.map((w) => Number((w / 100).toFixed(4)));
@@ -284,6 +338,7 @@ export default function AdminStrategiesPage() {
       payload.execution = {
         mode: rankedExecMode,
         strategy_name: rankedExecMode === "strategy" ? rankedSubStrategy : null,
+        params: rankedExecMode === "strategy" ? subParamList : [],
       };
     } else if (botType === "hold") {
       payload.traded_symbol = isCashReserve ? "CASH" : tradedSymbol.toUpperCase();
@@ -394,7 +449,8 @@ export default function AdminStrategiesPage() {
                 const instruments = liveVer?.instruments || [];
                 const traded = instruments.find((i: any) => i.role === "traded");
                 const signal = instruments.find((i: any) => i.role === "signal_source");
-                const configStrats = liveVer?.params?.strategies || [];
+                const stratParams = liveVer?.params || {};
+                const configStrats = stratParams.strategies || [];
                 const verNum = liveVer?.version || 1;
                 const currentSignals = strat.current_signals || [];
 
@@ -416,19 +472,52 @@ export default function AdminStrategiesPage() {
                     </td>
                     <td className="p-4 text-slate-muted font-medium">{strat.family}</td>
                     <td className="p-4 font-mono font-bold">
-                      {traded && (
-                        <span className="bg-tech-blue/10 text-tech-blue px-2 py-0.5 rounded border border-tech-blue/20">
-                          {traded.symbol}
-                        </span>
-                      )}
-                      {signal && (
-                        <span className="ml-1 bg-amber-50 text-amber-800 px-2 py-0.5 rounded border border-amber-200">
-                          (Sig: {signal.symbol})
-                        </span>
+                      {strat.kind === "ranked_allocation" ? (
+                        <div className="flex flex-wrap gap-1 max-w-[200px]">
+                          {instruments.map((inst: any, idx: number) => (
+                            <span
+                              key={idx}
+                              className="bg-tech-blue/10 text-tech-blue px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border border-tech-blue/20"
+                            >
+                              {inst.symbol}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <>
+                          {traded && (
+                            <span className="bg-tech-blue/10 text-tech-blue px-2 py-0.5 rounded border border-tech-blue/20">
+                              {traded.symbol}
+                            </span>
+                          )}
+                          {signal && (
+                            <span className="ml-1 bg-amber-50 text-amber-800 px-2 py-0.5 rounded border border-amber-200">
+                              (Sig: {signal.symbol})
+                            </span>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="p-4 text-slate-muted">
-                      {configStrats.length > 0 ? (
+                      {strat.kind === "ranked_allocation" ? (
+                        <div className="space-y-1">
+                          <div className="text-[11px] font-semibold text-navy">
+                            Modo: {stratParams.execution?.mode === "strategy" ? `Estrategia (${stratParams.execution.strategy_name})` : "Hold Directo"}
+                          </div>
+                          {stratParams.metrics && stratParams.metrics.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {stratParams.metrics.map((m: any, idx: number) => (
+                                <span
+                                  key={idx}
+                                  className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-100 rounded text-slate-700"
+                                >
+                                  {m.key.toUpperCase()}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : configStrats.length > 0 ? (
                         <div className="space-y-1">
                           {configStrats.map((cs: any, idx: number) => (
                             <span
@@ -886,7 +975,20 @@ export default function AdminStrategiesPage() {
 
                         <button
                           type="button"
-                          onClick={() => setRankedExecMode("strategy")}
+                          onClick={() => {
+                            setRankedExecMode("strategy");
+                            const keys = Object.keys(strategiesCatalog);
+                            if (keys.length > 0 && (!rankedSubStrategy || !strategiesCatalog[rankedSubStrategy])) {
+                              const firstKey = keys[0];
+                              setRankedSubStrategy(firstKey);
+                              const def = strategiesCatalog[firstKey];
+                              const defParams: Record<string, number> = {};
+                              def?.parameters?.forEach((p: any) => {
+                                defParams[p.name] = p.default;
+                              });
+                              setRankedSubParams(defParams);
+                            }
+                          }}
                           className={`p-3 rounded-xl border text-left transition-all ${
                             rankedExecMode === "strategy"
                               ? "bg-tech-blue/10 border-tech-blue text-navy font-bold"
@@ -901,21 +1003,77 @@ export default function AdminStrategiesPage() {
                       </div>
 
                       {rankedExecMode === "strategy" && (
-                        <div className="bg-white p-3 rounded-xl border border-tech-blue/30 mt-2">
-                          <label className="text-[11px] font-bold text-navy block mb-1">
-                            Estrategia a ejecutar en cada activo del ranking:
-                          </label>
-                          <select
-                            value={rankedSubStrategy}
-                            onChange={(e) => setRankedSubStrategy(e.target.value)}
-                            className="w-full bg-slate-50 border border-slate-subtle text-navy text-xs font-bold rounded-lg p-2"
-                          >
-                            {Object.entries(strategiesCatalog).map(([k, item]: [string, any]) => (
-                              <option key={k} value={k}>
-                                {item.name} [{item.category}]
-                              </option>
-                            ))}
-                          </select>
+                        <div className="bg-white p-3.5 rounded-xl border border-tech-blue/30 mt-2 space-y-3">
+                          <div>
+                            <label className="text-[11px] font-bold text-navy block mb-1">
+                              Estrategia a ejecutar en cada activo del ranking:
+                            </label>
+                            <select
+                              value={rankedSubStrategy}
+                              onChange={(e) => {
+                                const nextStrat = e.target.value;
+                                setRankedSubStrategy(nextStrat);
+                                const def = strategiesCatalog[nextStrat];
+                                const defParams: Record<string, number> = {};
+                                def?.parameters?.forEach((p: any) => {
+                                  defParams[p.name] = p.default;
+                                });
+                                setRankedSubParams(defParams);
+                              }}
+                              className="w-full bg-slate-50 border border-slate-subtle text-navy text-xs font-bold rounded-lg p-2"
+                            >
+                              {Object.entries(strategiesCatalog).map(([k, item]: [string, any]) => (
+                                <option key={k} value={k}>
+                                  {item.name} [{item.category}]
+                                </option>
+                              ))}
+                            </select>
+                            {strategiesCatalog[rankedSubStrategy]?.description && (
+                              <p className="text-[11px] text-slate-muted mt-1 leading-relaxed">
+                                {strategiesCatalog[rankedSubStrategy].description}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Parámetros de la Estrategia Subyacente */}
+                          {(strategiesCatalog[rankedSubStrategy]?.parameters || []).length > 0 && (
+                            <div className="pt-2 border-t border-slate-100">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-2">
+                                Hiperparámetros de Operación ({strategiesCatalog[rankedSubStrategy]?.name}):
+                              </span>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                                {strategiesCatalog[rankedSubStrategy].parameters.map((param: any) => (
+                                  <div
+                                    key={param.name}
+                                    className="bg-slate-50 p-2 rounded-lg border border-slate-200"
+                                  >
+                                    <label className="text-[10px] font-bold text-slate-600 block mb-1">
+                                      {param.label}
+                                    </label>
+                                    <input
+                                      type="number"
+                                      step={param.type === "float" ? "0.1" : "1"}
+                                      min={param.min}
+                                      max={param.max}
+                                      value={
+                                        rankedSubParams[param.name] !== undefined
+                                          ? rankedSubParams[param.name]
+                                          : param.default
+                                      }
+                                      onChange={(e) => {
+                                        const val = parseFloat(e.target.value);
+                                        setRankedSubParams((prev) => ({
+                                          ...prev,
+                                          [param.name]: isNaN(val) ? 0 : val,
+                                        }));
+                                      }}
+                                      className="w-full bg-white border border-slate-subtle text-navy text-xs font-mono font-bold rounded p-1.5 focus:outline-none focus:border-tech-blue"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
