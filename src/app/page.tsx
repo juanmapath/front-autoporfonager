@@ -35,6 +35,8 @@ export default function DashboardPage() {
   const [positions, setPositions] = useState<any[]>([]);
   const [recentOrders, setRecentOrders] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<"positions" | "orders">("positions");
+  const [selectedAlloc, setSelectedAlloc] = useState<any | null>(null);
+  const [strategyCatalog, setStrategyCatalog] = useState<{ strategies: Record<string, any>; botTypes: Record<string, any> }>({ strategies: {}, botTypes: {} });
 
   // Create Portfolio Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -64,6 +66,9 @@ export default function DashboardPage() {
   useEffect(() => {
     if (isAuthenticated) {
       loadPortfolios();
+      fetchApi("/strategies/")
+        .then((data) => setStrategyCatalog({ strategies: data?.strategies_catalog || {}, botTypes: data?.bot_types || {} }))
+        .catch(() => {});
     } else {
       setLoading(false);
     }
@@ -339,10 +344,38 @@ export default function DashboardPage() {
 
   const activePort = portfolios.find((p) => p.id === selectedId) || portfolios[0];
   const initialCap = activePort ? parseFloat(activePort.paper_initial_capital || "100000") : 100000;
-  const activeAllocs = activePort?.allocations || [];
+  const activeAllocs = (activePort?.allocations || []).filter((a: any) => parseFloat(a.target_weight) > 0);
   const brokerAccounts = activePort?.broker_accounts || [];
   const hasBroker = brokerAccounts.length > 0;
   const primaryBroker = activePort?.primary_broker || (hasBroker ? brokerAccounts[0] : null);
+
+  // Detalle de la estrategia seleccionada en el modal
+  const detailStrat = selectedAlloc?.strategy_detail;
+  const detailLive = detailStrat?.live_version;
+  const detailParams: any = detailLive?.params || {};
+  const detailBotType = detailStrat ? strategyCatalog.botTypes[detailStrat.kind] : null;
+  const detailTraded = (detailLive?.instruments || []).filter((i: any) => i.role === "traded");
+  const detailSignalSource = (detailLive?.instruments || []).filter((i: any) => i.role === "signal_source");
+  const detailCurrentSignals: any[] = detailStrat?.current_signals || [];
+  const detailRawConfigs: any[] = detailParams.strategies?.length
+    ? detailParams.strategies
+    : detailParams.execution?.mode === "strategy"
+      ? [{ strategy_name: detailParams.execution.strategy_name, params: detailParams.execution.params }]
+      : [];
+  const detailConfigs = detailRawConfigs.map((cs: any) => {
+    const def = strategyCatalog.strategies[cs.strategy_name];
+    const values: any[] = Array.isArray(cs.params) ? cs.params : [];
+    return {
+      key: cs.strategy_name,
+      title: def?.name || cs.strategy_name,
+      category: def?.category,
+      description: def?.description,
+      rows: (def?.parameters || []).map((p: any, idx: number) => ({
+        label: p.label,
+        value: Array.isArray(cs.params) ? values[idx] : cs.params?.[p.name],
+      })),
+    };
+  });
   const isPositiveReturn = (activePort?.total_return_pct || 0) >= 0;
 
   return (
@@ -489,7 +522,12 @@ export default function DashboardPage() {
                     {activeAllocs.map((alloc: any) => {
                       const pct = (parseFloat(alloc.target_weight) * 100).toFixed(0);
                       return (
-                        <div key={alloc.id} className="bg-slate-canvas p-3.5 rounded-xl border border-slate-subtle space-y-2">
+                        <button
+                          type="button"
+                          key={alloc.id}
+                          onClick={() => setSelectedAlloc(alloc)}
+                          className="w-full text-left bg-slate-canvas hover:bg-slate-100 p-3.5 rounded-xl border border-slate-subtle hover:border-tech-blue/40 space-y-2 transition-all"
+                        >
                           <div className="flex justify-between text-xs">
                             <span className="font-bold text-navy">{alloc.strategy_name || `Estrategia #${alloc.strategy}`}</span>
                             <span className="font-bold font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
@@ -499,7 +537,7 @@ export default function DashboardPage() {
                           <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
                             <div className="bg-emerald-success h-2 rounded-full transition-all" style={{ width: `${pct}%` }}></div>
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                     <div className="pt-1">
@@ -1121,6 +1159,219 @@ export default function DashboardPage() {
                 </div>
               </form>
             )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedAlloc && detailStrat && (
+        <div
+          className="fixed inset-0 bg-navy/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 z-[100] animate-fade-in"
+          onClick={() => setSelectedAlloc(null)}
+        >
+          <div
+            className="bg-white border border-slate-subtle rounded-2xl max-w-2xl w-full max-h-[88vh] shadow-2xl flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="p-5 sm:p-6 border-b border-slate-subtle flex justify-between items-start flex-shrink-0 bg-white">
+              <div>
+                <h2 className="font-heading font-extrabold text-lg text-navy flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-tech-blue" />
+                  <span>{detailStrat.name}</span>
+                  {detailLive && (
+                    <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-tech-blue/10 text-tech-blue border border-tech-blue/20">
+                      v{detailLive.version}
+                    </span>
+                  )}
+                </h2>
+                <p className="text-xs text-slate-muted font-mono mt-0.5">{detailStrat.slug}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedAlloc(null)}
+                className="text-slate-muted hover:text-navy text-sm font-bold p-1 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-5 sm:p-6 space-y-5 overflow-y-auto flex-1 overscroll-contain">
+              {/* Resumen */}
+              <section className="grid grid-cols-2 gap-3 text-xs">
+                <div className="bg-slate-canvas rounded-xl p-3 border border-slate-subtle">
+                  <div className="text-[10px] uppercase tracking-wider font-bold text-slate-muted">Tipo</div>
+                  <div className="font-bold text-navy mt-0.5">{detailBotType?.name || detailStrat.kind}</div>
+                  {detailBotType?.category && <div className="text-slate-muted mt-0.5">{detailBotType.category}</div>}
+                </div>
+                <div className="bg-slate-canvas rounded-xl p-3 border border-slate-subtle">
+                  <div className="text-[10px] uppercase tracking-wider font-bold text-slate-muted">Peso asignado</div>
+                  <div className="font-bold font-mono text-emerald-700 mt-0.5">
+                    {(parseFloat(selectedAlloc.target_weight) * 100).toFixed(0)}%
+                  </div>
+                </div>
+                <div className="bg-slate-canvas rounded-xl p-3 border border-slate-subtle">
+                  <div className="text-[10px] uppercase tracking-wider font-bold text-slate-muted">Familia / Timeframe</div>
+                  <div className="font-bold text-navy mt-0.5">
+                    {detailStrat.family} · <span className="font-mono">{detailStrat.timeframe}</span>
+                  </div>
+                </div>
+                <div className="bg-slate-canvas rounded-xl p-3 border border-slate-subtle">
+                  <div className="text-[10px] uppercase tracking-wider font-bold text-slate-muted">Estado</div>
+                  <div className={`font-bold mt-0.5 ${detailStrat.is_active ? "text-emerald-700" : "text-red-700"}`}>
+                    {detailStrat.is_active ? "ACTIVA" : "PAUSADA"}
+                  </div>
+                </div>
+              </section>
+
+              {/* Señal actual */}
+              <section className="space-y-2">
+                <h3 className="font-heading font-bold text-sm text-navy flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-tech-blue" />
+                  Señal actual
+                </h3>
+                {detailCurrentSignals.length > 0 ? (
+                  <div className="space-y-2">
+                    {detailCurrentSignals.map((sig: any, idx: number) => {
+                      const isLong = sig.direction === "LONG";
+                      const isShort = sig.direction === "SHORT";
+                      return (
+                        <div key={idx} className="flex items-center justify-between gap-2 bg-slate-canvas rounded-xl p-3 border border-slate-subtle text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-navy">{sig.symbol}</span>
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold border ${
+                                isLong
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  : isShort
+                                    ? "bg-red-50 text-red-700 border-red-200"
+                                    : "bg-slate-100 text-slate-600 border-slate-200"
+                              }`}
+                            >
+                              {isLong ? <TrendingUp className="w-3 h-3" /> : isShort ? <TrendingDown className="w-3 h-3" /> : null}
+                              {sig.direction}
+                            </span>
+                          </div>
+                          <div className="text-right text-slate-muted">
+                            <div className="font-mono font-bold text-navy">{(sig.target_exposure * 100).toFixed(0)}% exposición</div>
+                            {sig.as_of && <div>{new Date(sig.as_of).toLocaleString("es-ES")}</div>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-muted bg-slate-canvas rounded-xl p-3 border border-slate-subtle">Sin señal calculada todavía.</p>
+                )}
+              </section>
+
+              {/* Activos */}
+              <section className="space-y-2">
+                <h3 className="font-heading font-bold text-sm text-navy flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-tech-blue" />
+                  Activos operados
+                </h3>
+                <div className="flex flex-wrap gap-1.5 text-[11px] font-mono font-bold">
+                  {detailTraded.length > 0 ? (
+                    detailTraded.map((i: any, idx: number) => (
+                      <span key={idx} className="bg-tech-blue/10 text-tech-blue px-2 py-0.5 rounded border border-tech-blue/20">
+                        {i.symbol}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs italic text-slate-400 font-sans">Sin activos operados</span>
+                  )}
+                  {detailSignalSource.map((i: any, idx: number) => (
+                    <span key={`sig-${idx}`} className="bg-amber-50 text-amber-800 px-2 py-0.5 rounded border border-amber-200">
+                      Señal: {i.symbol}
+                    </span>
+                  ))}
+                </div>
+              </section>
+
+              {/* Apalancamiento y regímenes */}
+              <section className="space-y-2">
+                <h3 className="font-heading font-bold text-sm text-navy flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-tech-blue" />
+                  Apalancamiento y régimen
+                </h3>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="bg-slate-canvas rounded-xl p-3 border border-slate-subtle">
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-slate-muted">Apalancamiento máximo</div>
+                    <div className="font-bold font-mono text-navy mt-0.5">
+                      {detailParams.max_leverage ?? detailParams.leverage ?? 1}x
+                    </div>
+                    <div className="text-slate-muted mt-0.5">Base: {detailParams.leverage ?? 1}x</div>
+                  </div>
+                  <div className="bg-slate-canvas rounded-xl p-3 border border-slate-subtle">
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-slate-muted">Operación con regímenes</div>
+                    <div className={`font-bold mt-0.5 ${detailParams.use_regimes ? "text-emerald-700" : "text-slate-600"}`}>
+                      {detailParams.use_regimes ? "ACTIVA" : "INACTIVA"}
+                    </div>
+                    <div className="text-slate-muted mt-0.5">
+                      {detailParams.use_regimes ? "Apalancamiento dinámico según Profit Factor" : "Apalancamiento fijo"}
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* Configuración */}
+              <section className="space-y-2">
+                <h3 className="font-heading font-bold text-sm text-navy flex items-center gap-2">
+                  <Settings className="w-4 h-4 text-tech-blue" />
+                  Configuración
+                </h3>
+
+                {detailParams.rebalance_frequency && (
+                  <div className="text-xs text-slate-muted">
+                    Rebalanceo: <span className="font-bold text-navy">{detailParams.rebalance_frequency}</span>
+                  </div>
+                )}
+
+                {detailParams.metrics?.length > 0 && (
+                  <div className="space-y-1">
+                    <div className="text-xs text-slate-muted">Métricas de ranking</div>
+                    <div className="flex flex-wrap gap-1">
+                      {detailParams.metrics.map((m: any, idx: number) => (
+                        <span key={idx} className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-100 rounded text-slate-700">
+                          {String(m.key || "").toUpperCase()}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {detailParams.bot_type === "hold" && (
+                  <div className="text-xs text-slate-muted">
+                    {detailParams.is_cash ? "Reserva de cash" : "Posición fija"} ·{" "}
+                    {detailParams.participates_in_rebalance === false ? "No participa en rebalanceo" : "Participa en rebalanceo"}
+                  </div>
+                )}
+
+                {detailConfigs.map((cfg: any) => (
+                  <div key={cfg.key} className="bg-slate-canvas rounded-xl p-3 border border-slate-subtle space-y-2">
+                    <div>
+                      <div className="text-xs font-bold text-navy">{cfg.title}</div>
+                      {cfg.category && <div className="text-[10px] text-slate-muted">{cfg.category}</div>}
+                      {cfg.description && <p className="text-[11px] text-slate-muted mt-1">{cfg.description}</p>}
+                    </div>
+                    {cfg.rows.length > 0 && (
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                        {cfg.rows.map((row: any, idx: number) => (
+                          <div key={idx} className="contents">
+                            <span className="text-slate-muted">{row.label}</span>
+                            <span className="font-mono font-bold text-navy text-right">{row.value ?? "—"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {detailConfigs.length === 0 && !detailParams.metrics?.length && detailParams.bot_type !== "hold" && (
+                  <p className="text-xs text-slate-muted bg-slate-canvas rounded-xl p-3 border border-slate-subtle">Sin parámetros de estrategia configurados.</p>
+                )}
+              </section>
             </div>
           </div>
         </div>
