@@ -521,7 +521,7 @@ function AllocationsContent() {
                   Criterio de Tolerancia
                 </span>
                 <p className="text-[11px] leading-relaxed">
-                  Si alguna manga se desvía más de ±{(rebalTol * 100).toFixed(0)}% de su meta, el portafolio genera órdenes de rebalanceo MOC.
+                  Las entradas y salidas por señal se ejecutan cada día. En la fecha de rebalanceo, las posiciones abiertas que se desvíen más de ±{(rebalTol * 100).toFixed(0)}% de su meta se reajustan.
                 </p>
               </div>
             </div>
