@@ -26,6 +26,10 @@ import {
 } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import EquityHistoryChart from "@/components/EquityHistoryChart";
+
+const fmtUsd = (v: number | string | null | undefined) =>
+  `$${Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function DashboardPage() {
   const { user, isAuthenticated, loading: authLoading } = useAuth();
@@ -33,6 +37,7 @@ export default function DashboardPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [positions, setPositions] = useState<any[]>([]);
+  const [positionsSummary, setPositionsSummary] = useState<any | null>(null);
   const [recentOrders, setRecentOrders] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<"positions" | "orders">("positions");
   const [selectedAlloc, setSelectedAlloc] = useState<any | null>(null);
@@ -94,13 +99,15 @@ export default function DashboardPage() {
   const loadPortfolioDetails = async (portId: number) => {
     try {
       const [posData, ordersData] = await Promise.all([
-        fetchApi(`/portfolios/${portId}/positions/`).catch(() => []),
+        fetchApi(`/portfolios/${portId}/positions/`).catch(() => null),
         fetchApi(`/portfolios/${portId}/orders/`).catch(() => []),
       ]);
-      setPositions(posData || []);
+      setPositions(posData?.positions || []);
+      setPositionsSummary(posData?.summary || null);
       setRecentOrders(ordersData || []);
     } catch (e) {
       setPositions([]);
+      setPositionsSummary(null);
       setRecentOrders([]);
     }
   };
@@ -468,17 +475,46 @@ export default function DashboardPage() {
             {/* Card 2: Capital del Portafolio */}
             <div className="bg-white border border-slate-subtle p-5 rounded-2xl shadow-card-subtle space-y-2 flex flex-col justify-between">
               <div className="flex justify-between items-center text-slate-muted">
-                <span className="text-[11px] uppercase tracking-wider font-bold">Capital del Portafolio</span>
+                <span className="text-[11px] uppercase tracking-wider font-bold">Capital Actual</span>
                 <div className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-success">
                   <DollarSign className="w-4 h-4" />
                 </div>
               </div>
               <div className="text-2xl font-bold font-mono text-navy">
-                ${initialCap.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                {fmtUsd(activePort.current_value ?? initialCap)}
               </div>
-              <div className="text-xs text-slate-muted flex items-center gap-1">
-                <span>Moneda base:</span>
-                <span className="font-bold text-navy">{activePort.base_currency}</span>
+              <div className="text-xs text-slate-muted space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className={`font-mono font-bold ${activePort.total_pnl >= 0 ? "text-emerald-700" : "text-red-700"}`}>
+                    {activePort.total_pnl >= 0 ? "+" : ""}
+                    {fmtUsd(activePort.total_pnl)}
+                  </span>
+                  <span
+                    className={`font-mono font-bold ${activePort.total_return_pct >= 0 ? "text-emerald-700" : "text-red-700"}`}
+                    title="Rendimiento ponderado en el tiempo (sin efecto de depósitos y retiros)"
+                  >
+                    ({activePort.total_return_pct >= 0 ? "+" : ""}
+                    {Number(activePort.total_return_pct || 0).toFixed(2)}% TWR)
+                  </span>
+                </div>
+                <div>
+                  Inicial: <span className="font-mono font-bold text-navy">{fmtUsd(initialCap)}</span>
+                  {Number(activePort.net_contributions) !== 0 && (
+                    <>
+                      {" "}· Aportes netos: <span className="font-mono font-bold text-navy">{fmtUsd(activePort.net_contributions)}</span>
+                    </>
+                  )}
+                </div>
+                <div>
+                  {activePort.equity_source === "broker" ? (
+                    <>
+                      Saldo del broker
+                      {activePort.equity_synced_at && <> · act. {new Date(activePort.equity_synced_at).toLocaleString("es-ES")}</>}
+                    </>
+                  ) : (
+                    "Calculado desde la contabilidad interna"
+                  )}
+                </div>
               </div>
             </div>
 
@@ -499,6 +535,8 @@ export default function DashboardPage() {
               <div className="text-xs text-slate-muted font-mono">Ventana MOC: 15:35 - 15:48 ET</div>
             </div>
           </div>
+
+          <EquityHistoryChart portfolioId={activePort.id} />
 
           {/* Grid with 2 Core Columns: Left Column (Strategy Allocations & Broker), Right Column (Positions & Orders Tabs) */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -656,7 +694,7 @@ export default function DashboardPage() {
                         : "bg-slate-canvas text-navy hover:bg-slate-100 border border-slate-subtle"
                     }`}
                   >
-                    <span>Posiciones Lógicas</span>
+                    <span>Posiciones Abiertas</span>
                     <span className="px-1.5 py-0.5 rounded-full bg-white/20 text-[10px] font-mono">
                       {positions.length}
                     </span>
@@ -697,7 +735,35 @@ export default function DashboardPage() {
 
               {/* Tab 1: Positions Table */}
               {activeTab === "positions" && (
-                <div>
+                <div className="space-y-4">
+                  {positionsSummary && positions.length > 0 && (
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+                      {[
+                        { label: "Exposición bruta", value: fmtUsd(positionsSummary.gross_exposure) },
+                        { label: "Capital propio", value: fmtUsd(positionsSummary.own_capital_invested) },
+                        {
+                          label: "Financiado (margen)",
+                          value: fmtUsd(positionsSummary.financed),
+                          tone: positionsSummary.financed > 0 ? "text-amber-700" : undefined,
+                        },
+                        {
+                          label: "Apalancamiento",
+                          value: positionsSummary.leverage != null ? `${Number(positionsSummary.leverage).toFixed(2)}x` : "—",
+                          tone: positionsSummary.leverage > 1 ? "text-amber-700" : undefined,
+                        },
+                        {
+                          label: "PnL no realizado",
+                          value: fmtUsd(positionsSummary.unrealized_pnl),
+                          tone: positionsSummary.unrealized_pnl >= 0 ? "text-emerald-700" : "text-red-700",
+                        },
+                      ].map((k) => (
+                        <div key={k.label} className="bg-slate-canvas rounded-xl p-3 border border-slate-subtle">
+                          <div className="text-[10px] uppercase tracking-wider font-bold text-slate-muted">{k.label}</div>
+                          <div className={`font-bold font-mono mt-0.5 ${k.tone || "text-navy"}`}>{k.value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {positions.length > 0 ? (
                     <div className="overflow-x-auto">
                       <table className="w-full text-left text-xs text-navy">
@@ -705,23 +771,51 @@ export default function DashboardPage() {
                           <tr>
                             <th className="p-3 rounded-l-lg">Activo</th>
                             <th className="p-3">Estrategia</th>
-                            <th className="p-3">Cantidad</th>
-                            <th className="p-3">Precio Medio</th>
-                            <th className="p-3 rounded-r-lg">PnL Realizado</th>
+                            <th className="p-3 text-right">Cantidad</th>
+                            <th className="p-3 text-right">Precio Medio</th>
+                            <th className="p-3 text-right">Precio Actual</th>
+                            <th className="p-3 text-right">Valor</th>
+                            <th className="p-3 text-right">PnL No Realizado</th>
+                            <th className="p-3 text-right rounded-r-lg" title="Exposición de la manga / capital asignado a la manga">
+                              Apalanc.
+                            </th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-subtle">
-                          {positions.map((p, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                              <td className="p-3 font-bold text-navy">{p.instrument}</td>
-                              <td className="p-3 text-slate-muted">{p.strategy}</td>
-                              <td className="p-3 font-mono font-semibold">{p.qty}</td>
-                              <td className="p-3 font-mono text-slate-muted">${p.avg_cost}</td>
-                              <td className="p-3 font-mono font-bold text-emerald-success">
-                                ${p.realized_pnl}
-                              </td>
-                            </tr>
-                          ))}
+                          {positions.map((p, idx) => {
+                            const up = p.unrealized_pnl >= 0;
+                            return (
+                              <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                                <td className="p-3 font-bold text-navy">{p.instrument}</td>
+                                <td className="p-3 text-slate-muted">{p.strategy}</td>
+                                <td className="p-3 font-mono font-semibold text-right">{Number(p.qty).toLocaleString("en-US", { maximumFractionDigits: 4 })}</td>
+                                <td className="p-3 font-mono text-slate-muted text-right">{fmtUsd(p.avg_cost)}</td>
+                                <td
+                                  className="p-3 font-mono text-right"
+                                  title={p.price_as_of ? `Precio a ${new Date(p.price_as_of).toLocaleString("es-ES")}` : undefined}
+                                >
+                                  {fmtUsd(p.last_price)}
+                                </td>
+                                <td className="p-3 font-mono text-right">{fmtUsd(p.market_value)}</td>
+                                <td className={`p-3 font-mono font-bold text-right ${up ? "text-emerald-700" : "text-red-700"}`}>
+                                  <div>{fmtUsd(p.unrealized_pnl)}</div>
+                                  <div className="text-[10px] font-semibold">
+                                    {up ? "+" : ""}
+                                    {Number(p.unrealized_pnl_pct).toFixed(2)}%
+                                  </div>
+                                </td>
+                                <td
+                                  className="p-3 font-mono text-right"
+                                  title={`Propio: ${fmtUsd(p.own_capital)} · Financiado: ${fmtUsd(p.financed)}`}
+                                >
+                                  <div className={p.sleeve_leverage > 1 ? "font-bold text-amber-700" : "text-navy"}>
+                                    {p.sleeve_leverage != null ? `${Number(p.sleeve_leverage).toFixed(2)}x` : "—"}
+                                  </div>
+                                  {p.financed > 0 && <div className="text-[10px] text-slate-muted">{fmtUsd(p.financed)} fin.</div>}
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -742,10 +836,11 @@ export default function DashboardPage() {
                       <table className="w-full text-left text-xs text-navy">
                         <thead className="bg-slate-canvas text-slate-muted uppercase font-bold text-[10px] tracking-wider">
                           <tr>
-                            <th className="p-3 rounded-l-lg">ID / Client ID</th>
+                            <th className="p-3 rounded-l-lg">Fecha</th>
                             <th className="p-3">Activo</th>
                             <th className="p-3">Lado</th>
-                            <th className="p-3">Cantidad</th>
+                            <th className="p-3 text-right">Cantidad</th>
+                            <th className="p-3 text-right">Precio Ejec.</th>
                             <th className="p-3">Fuente</th>
                             <th className="p-3 rounded-r-lg">Estado</th>
                           </tr>
@@ -753,14 +848,23 @@ export default function DashboardPage() {
                         <tbody className="divide-y divide-slate-subtle">
                           {recentOrders.map((o) => (
                             <tr key={o.id} className="hover:bg-slate-50 transition-colors">
-                              <td className="p-3 font-mono text-slate-muted text-[11px]">{o.client_order_id || `#${o.id}`}</td>
+                              <td className="p-3 font-mono text-slate-muted text-[11px] whitespace-nowrap">
+                                {new Date(o.filled_at || o.created_at).toLocaleString("es-ES", {
+                                  day: "2-digit",
+                                  month: "2-digit",
+                                  year: "2-digit",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </td>
                               <td className="p-3 font-bold text-navy">{o.instrument}</td>
-                              <td className="p-3 font-bold">
-                                <span className={o.side === "BUY" ? "text-emerald-700" : "text-amber-700"}>
+                              <td className="p-3 font-bold uppercase">
+                                <span className={o.side?.toLowerCase() === "buy" ? "text-emerald-700" : "text-amber-700"}>
                                   {o.side}
                                 </span>
                               </td>
-                              <td className="p-3 font-mono">{o.qty}</td>
+                              <td className="p-3 font-mono text-right">{Number(o.qty).toLocaleString("en-US", { maximumFractionDigits: 4 })}</td>
+                              <td className="p-3 font-mono text-right">{o.fill_price ? fmtUsd(o.fill_price) : "—"}</td>
                               <td className="p-3 text-slate-muted capitalize">{o.source || "MOC"}</td>
                               <td className="p-3">
                                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
