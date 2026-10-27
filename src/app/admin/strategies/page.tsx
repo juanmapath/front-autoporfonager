@@ -343,6 +343,11 @@ export default function AdminStrategiesPage() {
         setError("Debes ingresar al menos 2 activos para el ranking.");
         return;
       }
+      const duplicated = [...new Set(symbolsClean.filter((s, i) => symbolsClean.indexOf(s) !== i))];
+      if (duplicated.length > 0) {
+        setError(`Hay activos repetidos en el universo: ${duplicated.join(", ")}. Elimina los duplicados antes de guardar.`);
+        return;
+      }
       if (selectedMetrics.length === 0) {
         setError("Debes seleccionar al menos 1 métrica.");
         return;
