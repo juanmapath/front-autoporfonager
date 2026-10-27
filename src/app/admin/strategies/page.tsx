@@ -65,6 +65,34 @@ export default function AdminStrategiesPage() {
     loadStrategiesData();
   }, []);
 
+  // Estrategias que se pueden elegir al armar bots (las bloqueadas no se muestran).
+  // `strategiesCatalog` sigue completo para poder leer bots existentes y el panel de catálogo.
+  const isBuildable = (item: any) => item?.available_for_bots !== false;
+  const buildableKeys = (cat: Record<string, any> = strategiesCatalog) =>
+    Object.keys(cat).filter((k) => isBuildable(cat[k]));
+  // Opciones de un selector: disponibles + la ya asignada a un bot existente (si hoy está bloqueada)
+  const strategyOptions = (current?: string) =>
+    Object.entries(strategiesCatalog).filter(([k, item]) => isBuildable(item) || k === current);
+
+  const [catalogSaving, setCatalogSaving] = useState<string | null>(null);
+  const handleToggleCatalogStrategy = async (key: string, available: boolean) => {
+    setCatalogSaving(key);
+    setError(null);
+    try {
+      const updated = await fetchApi("/ops/strategy-catalog/", {
+        method: "PATCH",
+        body: JSON.stringify({ strategy_name: key, available_for_bots: available }),
+      });
+      setStrategiesCatalog((prev) => ({ ...prev, [key]: updated }));
+      setMessage(`Estrategia ${strategiesCatalog[key]?.name || key} ${available ? "habilitada" : "bloqueada"} para armar bots`);
+      setTimeout(() => setMessage(null), 3000);
+    } catch (err: any) {
+      setError(err.message || "No se pudo actualizar la estrategia");
+    } finally {
+      setCatalogSaving(null);
+    }
+  };
+
   const loadStrategiesData = () => {
     fetchApi("/ops/strategies/").then((data) => {
       if (data) {
@@ -74,7 +102,7 @@ export default function AdminStrategiesPage() {
         setStrategiesCatalog(cat);
         setMetricsCatalog(data.metrics_catalog || []);
 
-        const keys = Object.keys(cat);
+        const keys = buildableKeys(cat);
         if (keys.length > 0) {
           const firstKey = keys[0];
           const def = cat[firstKey];
@@ -100,7 +128,7 @@ export default function AdminStrategiesPage() {
     setMaxLeverage(1.0);
     setUseRegimes(false);
 
-    const stratKeys = Object.keys(strategiesCatalog);
+    const stratKeys = buildableKeys();
     if (stratKeys.length > 0) {
       const firstKey = stratKeys[0];
       const def = strategiesCatalog[firstKey];
@@ -149,7 +177,7 @@ export default function AdminStrategiesPage() {
 
       const exec = params.execution || {};
       setRankedExecMode(exec.mode || "hold");
-      const subSName = exec.strategy_name || Object.keys(strategiesCatalog)[0] || "";
+      const subSName = exec.strategy_name || buildableKeys()[0] || "";
       setRankedSubStrategy(subSName);
       const subDef = strategiesCatalog[subSName];
       const subParamMap: Record<string, number> = {};
@@ -192,7 +220,7 @@ export default function AdminStrategiesPage() {
       });
       setSelectedStrats(slots);
     } else {
-      const stratKeys = Object.keys(strategiesCatalog);
+      const stratKeys = buildableKeys();
       if (stratKeys.length > 0) {
         const firstKey = stratKeys[0];
         const def = strategiesCatalog[firstKey];
@@ -246,7 +274,7 @@ export default function AdminStrategiesPage() {
   };
 
   const handleAddStrategySlot = () => {
-    const stratKeys = Object.keys(strategiesCatalog);
+    const stratKeys = buildableKeys();
     if (stratKeys.length === 0) return;
     const key = stratKeys[0];
     const def = strategiesCatalog[key];
@@ -684,6 +712,86 @@ export default function AdminStrategiesPage() {
         </div>
       </div>
 
+      {/* Strategies Catalog Availability (bloqueo para armado de bots; el backtest usa todo el catálogo) */}
+      <div className="bg-white border border-slate-subtle rounded-2xl shadow-card-subtle overflow-hidden">
+        <div className="p-4 bg-slate-canvas border-b border-slate-subtle flex justify-between items-center gap-3">
+          <div>
+            <h2 className="font-heading font-bold text-sm text-navy">Catálogo de Estrategias Cuantitativas</h2>
+            <p className="text-[11px] text-slate-muted">
+              Las estrategias bloqueadas no aparecen al armar bots. El backtest sigue pudiendo usarlas.
+            </p>
+          </div>
+          <span className="text-xs text-slate-muted font-medium bg-white px-2.5 py-1 rounded-lg border border-slate-subtle whitespace-nowrap">
+            Disponibles: <strong className="text-navy">{buildableKeys().length}</strong> / {Object.keys(strategiesCatalog).length}
+          </span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs text-navy">
+            <thead className="bg-slate-canvas text-slate-muted uppercase font-bold text-[10px] tracking-wider border-b border-slate-subtle">
+              <tr>
+                <th className="p-4">Estrategia</th>
+                <th className="p-4">Categoría</th>
+                <th className="p-4">Dirección</th>
+                <th className="p-4">Armado de Bots</th>
+                <th className="p-4 text-right">Acción</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-subtle">
+              {Object.entries(strategiesCatalog).map(([key, item]: [string, any]) => {
+                const available = isBuildable(item);
+                return (
+                  <tr key={key} className={available ? "" : "bg-slate-50/60"}>
+                    <td className="p-4">
+                      <div className="font-bold">{item.name}</div>
+                      <div className="font-mono text-[10px] text-slate-muted">{key}</div>
+                    </td>
+                    <td className="p-4 text-slate-600">{item.category}</td>
+                    <td className="p-4">
+                      <span
+                        className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${
+                          item.direction === "short"
+                            ? "bg-red-50 text-red-700 border-red-200"
+                            : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        }`}
+                      >
+                        {item.direction === "short" ? "Short" : "Long"}
+                      </span>
+                    </td>
+                    <td className="p-4">
+                      {available ? (
+                        <span className="text-emerald-700 font-bold">Disponible</span>
+                      ) : (
+                        <div>
+                          <span className="text-red-700 font-bold">Bloqueada</span>
+                          {item.blocked_reason && (
+                            <div className="text-[10px] text-slate-muted mt-0.5">{item.blocked_reason}</div>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-4 text-right">
+                      <button
+                        onClick={() => handleToggleCatalogStrategy(key, !available)}
+                        disabled={item.locked || catalogSaving === key}
+                        title={item.locked ? item.blocked_reason : available ? "Ocultar del armado de bots" : "Mostrar en el armado de bots"}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                          available
+                            ? "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
+                            : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                        }`}
+                      >
+                        <Power className="w-3.5 h-3.5 inline mr-1" />
+                        {available ? "Bloquear" : "Habilitar"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* Create / Reconfigure Bot Wizard Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-navy/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 z-[100] animate-fade-in">
@@ -727,11 +835,12 @@ export default function AdminStrategiesPage() {
                     onChange={(e) => {
                       const nextType = e.target.value;
                       setBotType(nextType);
-                      // Adjust strategy slots if multi vs single
-                      if (nextType === "multi_strategy" && selectedStrats.length < 2) {
-                        handleAddStrategySlot();
-                      } else if (nextType === "one_strategy" && selectedStrats.length > 1) {
-                        setSelectedStrats((prev) => [prev[0]]);
+                      // Ajustar los slots al rango de estrategias que admite el nuevo tipo de bot
+                      const { min_strategies: min = 0, max_strategies: max } = botTypes[nextType] || {};
+                      if (typeof max === "number" && selectedStrats.length > max) {
+                        setSelectedStrats((prev) => prev.slice(0, max));
+                      } else if (selectedStrats.length < min) {
+                        for (let i = selectedStrats.length; i < min; i++) handleAddStrategySlot();
                       }
                     }}
                     className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-3 text-xs font-semibold focus:outline-none focus:border-tech-blue"
@@ -977,8 +1086,9 @@ export default function AdminStrategiesPage() {
                           type="button"
                           onClick={() => {
                             setRankedExecMode("strategy");
-                            const keys = Object.keys(strategiesCatalog);
-                            if (keys.length > 0 && (!rankedSubStrategy || !strategiesCatalog[rankedSubStrategy])) {
+                            const keys = buildableKeys();
+                            const keepCurrent = keys.includes(rankedSubStrategy) || (editingBot && strategiesCatalog[rankedSubStrategy]);
+                            if (keys.length > 0 && !keepCurrent) {
                               const firstKey = keys[0];
                               setRankedSubStrategy(firstKey);
                               const def = strategiesCatalog[firstKey];
@@ -1022,7 +1132,7 @@ export default function AdminStrategiesPage() {
                               }}
                               className="w-full bg-slate-50 border border-slate-subtle text-navy text-xs font-bold rounded-lg p-2"
                             >
-                              {Object.entries(strategiesCatalog).map(([k, item]: [string, any]) => (
+                              {strategyOptions(editingBot ? rankedSubStrategy : undefined).map(([k, item]: [string, any]) => (
                                 <option key={k} value={k}>
                                   {item.name} [{item.category}]
                                 </option>
@@ -1228,7 +1338,7 @@ export default function AdminStrategiesPage() {
                                 onChange={(e) => handleStrategyChange(idx, e.target.value)}
                                 className="w-full bg-white border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-semibold focus:outline-none focus:border-tech-blue"
                               >
-                                {Object.entries(strategiesCatalog).map(([k, item]: [string, any]) => (
+                                {strategyOptions(editingBot ? slot.strategy_name : undefined).map(([k, item]: [string, any]) => (
                                   <option key={k} value={k}>
                                     {item.name} [{item.category}]
                                   </option>
