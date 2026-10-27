@@ -562,7 +562,17 @@ export default function BacktestLabPage() {
               </label>
               <select
                 value={botType}
-                onChange={(e) => setBotType(e.target.value)}
+                onChange={(e) => {
+                  const nextType = e.target.value;
+                  setBotType(nextType);
+                  // Ajustar los slots al rango de estrategias que admite el nuevo tipo de bot
+                  const { min_strategies: min = 0, max_strategies: max } = botTypesCatalog[nextType] || {};
+                  if (typeof max === "number" && selectedStrats.length > max) {
+                    setSelectedStrats((prev) => prev.slice(0, max));
+                  } else if (selectedStrats.length < min) {
+                    for (let i = selectedStrats.length; i < min; i++) handleAddStrategySlot();
+                  }
+                }}
                 className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-3 text-xs font-semibold focus:outline-none focus:border-tech-blue focus:ring-2 focus:ring-tech-blue/10"
               >
                 {Object.keys(botTypesCatalog).map((key) => {
