@@ -39,7 +39,8 @@ export default function DashboardPage() {
   const [positions, setPositions] = useState<any[]>([]);
   const [positionsSummary, setPositionsSummary] = useState<any | null>(null);
   const [recentOrders, setRecentOrders] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<"positions" | "orders">("positions");
+  const [contributions, setContributions] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<"positions" | "orders" | "contributions">("positions");
   const [selectedAlloc, setSelectedAlloc] = useState<any | null>(null);
   const [strategyCatalog, setStrategyCatalog] = useState<{ strategies: Record<string, any>; botTypes: Record<string, any> }>({ strategies: {}, botTypes: {} });
 
@@ -98,17 +99,20 @@ export default function DashboardPage() {
 
   const loadPortfolioDetails = async (portId: number) => {
     try {
-      const [posData, ordersData] = await Promise.all([
+      const [posData, ordersData, contribData] = await Promise.all([
         fetchApi(`/portfolios/${portId}/positions/`).catch(() => null),
         fetchApi(`/portfolios/${portId}/orders/`).catch(() => []),
+        fetchApi(`/portfolios/${portId}/contributions/`).catch(() => null),
       ]);
       setPositions(posData?.positions || []);
       setPositionsSummary(posData?.summary || null);
       setRecentOrders(ordersData || []);
+      setContributions(contribData?.contributions || []);
     } catch (e) {
       setPositions([]);
       setPositionsSummary(null);
       setRecentOrders([]);
+      setContributions([]);
     }
   };
 
@@ -410,14 +414,25 @@ export default function DashboardPage() {
       {/* Active Portfolio Comprehensive View */}
       {activePort && (
         <>
-          {/* Main Top Cards: Portfolio Selector + Capital + Trading Status */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Main Top Cards: Portfolio Selector + Capital */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {/* Card 1: Portfolio Selector & Quick Creation (Spans 2 columns on lg) */}
             <div className="lg:col-span-2 bg-white border border-slate-subtle p-5 rounded-2xl shadow-card-subtle flex flex-col justify-between space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] uppercase tracking-wider font-bold text-slate-muted">
                     Portafolio Activo
+                  </span>
+                  <span
+                    className={`inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                      activePort.trading_enabled
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        : "bg-amber-100 text-amber-800 border border-amber-200"
+                    }`}
+                    title="Estado de trading · Ventana MOC: 15:35 - 15:48 ET"
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${activePort.trading_enabled ? "bg-emerald-success animate-pulse" : "bg-amber-500"}`} />
+                    {activePort.trading_enabled ? "Trading activo" : "Trading pausado"}
                   </span>
                   <span
                     className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
@@ -518,22 +533,6 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Card 3: Estado de Trading */}
-            <div className="bg-white border border-slate-subtle p-5 rounded-2xl shadow-card-subtle space-y-2 flex flex-col justify-between">
-              <div className="flex justify-between items-center text-slate-muted">
-                <span className="text-[11px] uppercase tracking-wider font-bold">Estado de Trading</span>
-                <div className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-success">
-                  <Activity className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className={`w-2.5 h-2.5 rounded-full ${activePort.trading_enabled ? "bg-emerald-success animate-pulse" : "bg-amber-500"}`} />
-                <span className={`text-2xl font-bold font-heading ${activePort.trading_enabled ? "text-emerald-700" : "text-amber-700"}`}>
-                  {activePort.trading_enabled ? "ACTIVO" : "PAUSADO"}
-                </span>
-              </div>
-              <div className="text-xs text-slate-muted font-mono">Ventana MOC: 15:35 - 15:48 ET</div>
-            </div>
           </div>
 
           <EquityHistoryChart portfolioId={activePort.id} />
@@ -713,6 +712,20 @@ export default function DashboardPage() {
                       {recentOrders.length}
                     </span>
                   </button>
+
+                  <button
+                    onClick={() => setActiveTab("contributions")}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                      activeTab === "contributions"
+                        ? "bg-navy text-white shadow-navy-glow"
+                        : "bg-slate-canvas text-navy hover:bg-slate-100 border border-slate-subtle"
+                    }`}
+                  >
+                    <span>Aportes</span>
+                    <span className="px-1.5 py-0.5 rounded-full bg-white/20 text-[10px] font-mono">
+                      {contributions.length}
+                    </span>
+                  </button>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -823,6 +836,67 @@ export default function DashboardPage() {
                     <div className="p-10 text-center text-xs text-slate-muted bg-slate-canvas rounded-xl border border-dashed border-slate-subtle space-y-2">
                       <p className="font-semibold text-navy">No hay posiciones abiertas actualmente</p>
                       <p>Se generarán automáticamente cuando las estrategias emitan señales de compra en la ventana de mercado (15:35 - 15:48 ET).</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab 3: Aportes a la cuenta (capital inicial + depósitos y retiros) */}
+              {activeTab === "contributions" && (
+                <div>
+                  {contributions.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs text-navy">
+                        <thead className="bg-slate-canvas text-slate-muted uppercase font-bold text-[10px] tracking-wider">
+                          <tr>
+                            <th className="p-3 rounded-l-lg">Fecha</th>
+                            <th className="p-3">Tipo</th>
+                            <th className="p-3">Referencia</th>
+                            <th className="p-3 text-right rounded-r-lg">Monto</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-subtle">
+                          {contributions.map((c) => (
+                            <tr key={c.id} className="hover:bg-slate-50 transition-colors">
+                              <td className="p-3 font-mono text-slate-muted text-[11px] whitespace-nowrap">
+                                {new Date(`${c.date}T12:00:00`).toLocaleDateString("es-ES", {
+                                  day: "2-digit",
+                                  month: "2-digit",
+                                  year: "numeric",
+                                })}
+                              </td>
+                              <td className="p-3 font-bold">
+                                <span
+                                  className={
+                                    c.type === "withdrawal" ? "text-amber-700" : c.type === "initial" ? "text-tech-blue" : "text-emerald-700"
+                                  }
+                                >
+                                  {c.type === "initial" ? "Capital inicial" : c.type === "withdrawal" ? "Retiro" : "Depósito"}
+                                </span>
+                              </td>
+                              <td className="p-3 text-slate-muted font-mono text-[11px]">{c.type === "initial" ? "—" : c.reference || "—"}</td>
+                              <td className={`p-3 font-mono font-bold text-right ${c.amount >= 0 ? "text-emerald-700" : "text-amber-700"}`}>
+                                {c.amount >= 0 ? "+" : ""}
+                                {fmtUsd(c.amount)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t-2 border-slate-subtle">
+                            <td colSpan={3} className="p-3 font-bold uppercase text-[10px] tracking-wider text-slate-muted">
+                              Total aportado
+                            </td>
+                            <td className="p-3 font-mono font-bold text-right text-navy">
+                              {fmtUsd(contributions.reduce((s, c) => s + Number(c.amount || 0), 0))}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="p-10 text-center text-xs text-slate-muted bg-slate-canvas rounded-xl border border-dashed border-slate-subtle">
+                      <p className="font-semibold text-navy">No hay aportes registrados</p>
                     </div>
                   )}
                 </div>
