@@ -28,6 +28,34 @@ import { fetchApi } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import EquityHistoryChart from "@/components/EquityHistoryChart";
 
+const PAGE_SIZE = 10;
+
+function Pager({ page, total, onChange }: { page: number; total: number; onChange: (p: number) => void }) {
+  const pages = Math.max(Math.ceil(total / PAGE_SIZE), 1);
+  if (total <= PAGE_SIZE) return null;
+  const from = (page - 1) * PAGE_SIZE + 1;
+  const to = Math.min(page * PAGE_SIZE, total);
+  const btn = "px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-subtle bg-slate-canvas text-navy hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed";
+  return (
+    <div className="flex items-center justify-between pt-3 text-xs text-slate-muted">
+      <span className="font-mono">
+        {from}–{to} de {total}
+      </span>
+      <div className="flex items-center gap-2">
+        <button className={btn} disabled={page <= 1} onClick={() => onChange(page - 1)}>
+          Anterior
+        </button>
+        <span className="font-mono">
+          {page} / {pages}
+        </span>
+        <button className={btn} disabled={page >= pages} onClick={() => onChange(page + 1)}>
+          Siguiente
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const fmtUsd = (v: number | string | null | undefined) =>
   `$${Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -40,6 +68,11 @@ export default function DashboardPage() {
   const [positionsSummary, setPositionsSummary] = useState<any | null>(null);
   const [recentOrders, setRecentOrders] = useState<any[]>([]);
   const [contributions, setContributions] = useState<any[]>([]);
+  const [contribTotal, setContribTotal] = useState(0);
+  const [contribSum, setContribSum] = useState(0);
+  const [contribPage, setContribPage] = useState(1);
+  const [ordersTotal, setOrdersTotal] = useState(0);
+  const [ordersPage, setOrdersPage] = useState(1);
   const [activeTab, setActiveTab] = useState<"positions" | "orders" | "contributions">("positions");
   const [selectedAlloc, setSelectedAlloc] = useState<any | null>(null);
   const [strategyCatalog, setStrategyCatalog] = useState<{ strategies: Record<string, any>; botTypes: Record<string, any> }>({ strategies: {}, botTypes: {} });
@@ -97,17 +130,27 @@ export default function DashboardPage() {
     }
   };
 
+  const loadOrders = async (portId: number, page = 1) => {
+    const res = await fetchApi(`/portfolios/${portId}/orders/?page=${page}&page_size=${PAGE_SIZE}`).catch(() => null);
+    setRecentOrders(res?.results || []);
+    setOrdersTotal(res?.count || 0);
+    setOrdersPage(page);
+  };
+
+  const loadContributions = async (portId: number, page = 1) => {
+    const res = await fetchApi(`/portfolios/${portId}/contributions/?page=${page}&page_size=${PAGE_SIZE}`).catch(() => null);
+    setContributions(res?.contributions || []);
+    setContribTotal(res?.count || 0);
+    setContribSum(res?.total || 0);
+    setContribPage(page);
+  };
+
   const loadPortfolioDetails = async (portId: number) => {
     try {
-      const [posData, ordersData, contribData] = await Promise.all([
-        fetchApi(`/portfolios/${portId}/positions/`).catch(() => null),
-        fetchApi(`/portfolios/${portId}/orders/`).catch(() => []),
-        fetchApi(`/portfolios/${portId}/contributions/`).catch(() => null),
-      ]);
+      const posData = await fetchApi(`/portfolios/${portId}/positions/`).catch(() => null);
       setPositions(posData?.positions || []);
       setPositionsSummary(posData?.summary || null);
-      setRecentOrders(ordersData || []);
-      setContributions(contribData?.contributions || []);
+      await Promise.all([loadOrders(portId, 1), loadContributions(portId, 1)]);
     } catch (e) {
       setPositions([]);
       setPositionsSummary(null);
@@ -512,13 +555,11 @@ export default function DashboardPage() {
                     {Number(activePort.total_return_pct || 0).toFixed(2)}% TWR)
                   </span>
                 </div>
-                <div>
-                  Inicial: <span className="font-mono font-bold text-navy">{fmtUsd(initialCap)}</span>
-                  {Number(activePort.net_contributions) !== 0 && (
-                    <>
-                      {" "}· Aportes netos: <span className="font-mono font-bold text-navy">{fmtUsd(activePort.net_contributions)}</span>
-                    </>
-                  )}
+                <div title="Capital inicial + depósitos − retiros">
+                  Aportes netos:{" "}
+                  <span className="font-mono font-bold text-navy">
+                    {fmtUsd(initialCap + Number(activePort.net_contributions || 0))}
+                  </span>
                 </div>
                 <div>
                   {activePort.equity_source === "broker" ? (
@@ -709,7 +750,7 @@ export default function DashboardPage() {
                   >
                     <span>Órdenes & Fills Recientes</span>
                     <span className="px-1.5 py-0.5 rounded-full bg-white/20 text-[10px] font-mono">
-                      {recentOrders.length}
+                      {ordersTotal}
                     </span>
                   </button>
 
@@ -723,7 +764,7 @@ export default function DashboardPage() {
                   >
                     <span>Aportes</span>
                     <span className="px-1.5 py-0.5 rounded-full bg-white/20 text-[10px] font-mono">
-                      {contributions.length}
+                      {contribTotal}
                     </span>
                   </button>
                 </div>
@@ -778,9 +819,9 @@ export default function DashboardPage() {
                     </div>
                   )}
                   {positions.length > 0 ? (
-                    <div className="overflow-x-auto">
+                    <div className="overflow-auto h-[360px] rounded-lg border border-slate-subtle">
                       <table className="w-full text-left text-xs text-navy">
-                        <thead className="bg-slate-canvas text-slate-muted uppercase font-bold text-[10px] tracking-wider">
+                        <thead className="sticky top-0 z-10 bg-slate-canvas text-slate-muted uppercase font-bold text-[10px] tracking-wider shadow-[0_1px_0_0_#EAECF0]">
                           <tr>
                             <th className="p-3 rounded-l-lg">Activo</th>
                             <th className="p-3">Estrategia</th>
@@ -845,9 +886,9 @@ export default function DashboardPage() {
               {activeTab === "contributions" && (
                 <div>
                   {contributions.length > 0 ? (
-                    <div className="overflow-x-auto">
+                    <div className="overflow-auto h-[360px] rounded-lg border border-slate-subtle">
                       <table className="w-full text-left text-xs text-navy">
-                        <thead className="bg-slate-canvas text-slate-muted uppercase font-bold text-[10px] tracking-wider">
+                        <thead className="sticky top-0 z-10 bg-slate-canvas text-slate-muted uppercase font-bold text-[10px] tracking-wider shadow-[0_1px_0_0_#EAECF0]">
                           <tr>
                             <th className="p-3 rounded-l-lg">Fecha</th>
                             <th className="p-3">Tipo</th>
@@ -883,13 +924,11 @@ export default function DashboardPage() {
                           ))}
                         </tbody>
                         <tfoot>
-                          <tr className="border-t-2 border-slate-subtle">
+                          <tr className="sticky bottom-0 bg-white border-t-2 border-slate-subtle shadow-[0_-1px_0_0_#EAECF0]">
                             <td colSpan={3} className="p-3 font-bold uppercase text-[10px] tracking-wider text-slate-muted">
                               Total aportado
                             </td>
-                            <td className="p-3 font-mono font-bold text-right text-navy">
-                              {fmtUsd(contributions.reduce((s, c) => s + Number(c.amount || 0), 0))}
-                            </td>
+                            <td className="p-3 font-mono font-bold text-right text-navy">{fmtUsd(contribSum)}</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -899,6 +938,7 @@ export default function DashboardPage() {
                       <p className="font-semibold text-navy">No hay aportes registrados</p>
                     </div>
                   )}
+                  <Pager page={contribPage} total={contribTotal} onChange={(pg) => loadContributions(activePort.id, pg)} />
                 </div>
               )}
 
@@ -906,9 +946,9 @@ export default function DashboardPage() {
               {activeTab === "orders" && (
                 <div>
                   {recentOrders.length > 0 ? (
-                    <div className="overflow-x-auto">
+                    <div className="overflow-auto h-[360px] rounded-lg border border-slate-subtle">
                       <table className="w-full text-left text-xs text-navy">
-                        <thead className="bg-slate-canvas text-slate-muted uppercase font-bold text-[10px] tracking-wider">
+                        <thead className="sticky top-0 z-10 bg-slate-canvas text-slate-muted uppercase font-bold text-[10px] tracking-wider shadow-[0_1px_0_0_#EAECF0]">
                           <tr>
                             <th className="p-3 rounded-l-lg">Fecha</th>
                             <th className="p-3">Activo</th>
@@ -965,6 +1005,7 @@ export default function DashboardPage() {
                       </div>
                     </div>
                   )}
+                  <Pager page={ordersPage} total={ordersTotal} onChange={(pg) => loadOrders(activePort.id, pg)} />
                 </div>
               )}
             </div>

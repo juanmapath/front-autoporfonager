@@ -64,6 +64,7 @@ export default function EquityHistoryChart({ portfolioId }: { portfolioId: numbe
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState<RangeKey>("ALL");
   const [selected, setSelected] = useState<string[]>(["SPY", "QQQ"]);
+  const [view, setView] = useState<"returns" | "capital">("returns");
 
   useEffect(() => {
     setLoading(true);
@@ -128,7 +129,7 @@ export default function EquityHistoryChart({ portfolioId }: { portfolioId: numbe
           <p className="text-xs text-slate-muted">Rendimiento frente a índices principales y evolución del capital</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {ALL_BENCHMARKS.map((sym) => {
+          {view === "returns" && ALL_BENCHMARKS.map((sym) => {
             const on = selected.includes(sym);
             return (
               <button
@@ -162,6 +163,26 @@ export default function EquityHistoryChart({ portfolioId }: { portfolioId: numbe
         </div>
       </div>
 
+      <div className="flex items-center gap-2">
+        {([
+          ["returns", "Rendimiento acumulado"],
+          ["capital", "Curva de capital"],
+        ] as const).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setView(key)}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              view === key
+                ? "bg-navy text-white shadow-navy-glow"
+                : "bg-slate-canvas text-navy hover:bg-slate-100 border border-slate-subtle"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {loading ? (
         <div className="h-64 flex items-center justify-center text-xs text-slate-muted">Cargando historial…</div>
       ) : rows.length < 2 ? (
@@ -171,6 +192,7 @@ export default function EquityHistoryChart({ portfolioId }: { portfolioId: numbe
         </div>
       ) : (
         <>
+          {view === "returns" && (
           <div className="flex flex-wrap gap-2 text-xs">
             {["portfolio", ...selected].map((key) => {
               const v = last?.[key];
@@ -184,10 +206,12 @@ export default function EquityHistoryChart({ portfolioId }: { portfolioId: numbe
               );
             })}
           </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          )}
+          <div>
+            {view === "returns" && (
             <div className="space-y-2">
               <h3 className="text-xs font-bold text-navy">Rendimiento acumulado (TWR)</h3>
-              <div className="h-60">
+              <div className="h-72">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                     <CartesianGrid stroke="#EAECF0" strokeDasharray="4 4" vertical={false} />
@@ -212,7 +236,9 @@ export default function EquityHistoryChart({ portfolioId }: { portfolioId: numbe
                 </ResponsiveContainer>
               </div>
             </div>
+            )}
 
+            {view === "capital" && (
             <div className="space-y-2">
               <div className="flex items-baseline justify-between gap-2">
                 <h3 className="text-xs font-bold text-navy">Capital</h3>
@@ -225,7 +251,7 @@ export default function EquityHistoryChart({ portfolioId }: { portfolioId: numbe
                   </span>
                 )}
               </div>
-              <div className="h-60">
+              <div className="h-72">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={capitalRows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                     <CartesianGrid stroke="#EAECF0" strokeDasharray="4 4" vertical={false} />
@@ -257,6 +283,7 @@ export default function EquityHistoryChart({ portfolioId }: { portfolioId: numbe
                 </span>
               </div>
             </div>
+            )}
           </div>
           <p className="text-[11px] text-slate-muted">
             El rendimiento encadena retornos logarítmicos diarios descontando depósitos y retiros, así que es comparable con los

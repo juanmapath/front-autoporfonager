@@ -467,12 +467,10 @@ export default function AdminStrategiesPage() {
             <thead className="bg-slate-canvas text-slate-muted uppercase font-bold text-[10px] tracking-wider border-b border-slate-subtle">
               <tr>
                 <th className="p-4">Nombre / Versión</th>
-                <th className="p-4">Tipo de Bot</th>
-                <th className="p-4">Familia</th>
-                <th className="p-4">Activo(s)</th>
+                <th className="p-4">Tipo / Familia</th>
+                <th className="p-4">Activo(s) / Señal</th>
                 <th className="p-4">Estrategias Asignadas</th>
                 <th className="p-4">Estado</th>
-                <th className="p-4">Señal Actual</th>
                 <th className="p-4 text-right">Acciones</th>
               </tr>
             </thead>
@@ -502,34 +500,53 @@ export default function AdminStrategiesPage() {
                       <span className="text-xs px-2.5 py-1 rounded-lg bg-slate-canvas border border-slate-subtle text-navy font-bold">
                         {strat.kind}
                       </span>
+                      <div className="text-[11px] text-slate-muted font-medium mt-1">{strat.family}</div>
                     </td>
-                    <td className="p-4 text-slate-muted font-medium">{strat.family}</td>
                     <td className="p-4 font-mono font-bold">
-                      {strat.kind === "ranked_allocation" ? (
-                        <div className="flex flex-wrap gap-1 max-w-[200px]">
-                          {instruments.map((inst: any, idx: number) => (
-                            <span
-                              key={idx}
-                              className="bg-tech-blue/10 text-tech-blue px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border border-tech-blue/20"
-                            >
-                              {inst.symbol}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <>
-                          {traded && (
-                            <span className="bg-tech-blue/10 text-tech-blue px-2 py-0.5 rounded border border-tech-blue/20">
-                              {traded.symbol}
-                            </span>
-                          )}
-                          {signal && (
-                            <span className="ml-1 bg-amber-50 text-amber-800 px-2 py-0.5 rounded border border-amber-200">
-                              (Sig: {signal.symbol})
-                            </span>
-                          )}
-                        </>
-                      )}
+                      <div className="flex flex-wrap gap-1.5 max-w-[320px]">
+                        {instruments
+                          .filter((inst: any) => inst.role !== "signal_source")
+                          .map((inst: any, idx: number) => {
+                            const sig = currentSignals.find((x: any) => x.symbol === inst.symbol);
+                            const rank = sig?.diagnostics?.rank;
+                            const pct = sig ? Math.round((sig.target_exposure || 0) * 100) : null;
+                            const tone = !sig
+                              ? "bg-tech-blue/10 text-tech-blue border-tech-blue/20"
+                              : sig.direction === "LONG"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                              : sig.direction === "SHORT"
+                              ? "bg-red-50 text-red-700 border-red-300"
+                              : "bg-slate-100 text-slate-500 border-slate-300";
+                            const symbol = !sig ? "" : sig.direction === "LONG" ? "▲" : sig.direction === "SHORT" ? "▼" : "—";
+                            return (
+                              <span
+                                key={idx}
+                                title={
+                                  sig
+                                    ? `${sig.direction} ${pct}%${rank ? ` · puesto #${rank}` : ""}${
+                                        sig.as_of ? ` · ${new Date(sig.as_of).toLocaleString("es-CO")}` : ""
+                                      }`
+                                    : "Sin cálculo de señal"
+                                }
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${tone}`}
+                              >
+                                {rank != null && <span className="opacity-60">#{rank}</span>}
+                                <span>{inst.symbol}</span>
+                                {sig && (
+                                  <span>
+                                    {symbol}
+                                    {pct}%
+                                  </span>
+                                )}
+                              </span>
+                            );
+                          })}
+                        {signal && (
+                          <span className="bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded border border-amber-200 text-[10px]">
+                            Sig: {signal.symbol}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="p-4 text-slate-muted">
                       {strat.kind === "ranked_allocation" ? (
@@ -581,60 +598,16 @@ export default function AdminStrategiesPage() {
                         <span>{strat.is_active ? "ACTIVA" : "PAUSADA"}</span>
                       </span>
                     </td>
-                    <td className="p-4">
-                      {currentSignals.length > 0 ? (
-                        <div className="space-y-1">
-                          {currentSignals.map((sig: any, sIdx: number) => {
-                            const isLong = sig.direction === "LONG";
-                            const isShort = sig.direction === "SHORT";
-                            const expPct = Math.round((sig.target_exposure || 0) * 100);
-
-                            return (
-                              <div key={sIdx} className="space-y-0.5">
-                                <span
-                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-bold border ${
-                                    isLong
-                                      ? "bg-emerald-50 text-emerald-700 border-emerald-300"
-                                      : isShort
-                                      ? "bg-red-50 text-red-700 border-red-300"
-                                      : "bg-slate-100 text-slate-600 border-slate-300"
-                                  }`}
-                                >
-                                  <span
-                                    className={`w-1.5 h-1.5 rounded-full ${
-                                      isLong
-                                        ? "bg-emerald-500 animate-pulse"
-                                        : isShort
-                                        ? "bg-red-500 animate-pulse"
-                                        : "bg-slate-400"
-                                    }`}
-                                  />
-                                  <span>
-                                    {sig.direction} {expPct}% ({sig.symbol})
-                                  </span>
-                                </span>
-                                {sig.as_of && (
-                                  <div className="text-[10px] text-slate-400 font-mono">
-                                    {new Date(sig.as_of).toLocaleDateString("es-CO", {
-                                      month: "short",
-                                      day: "numeric",
-                                    })}{" "}
-                                    {new Date(sig.as_of).toLocaleTimeString("es-CO", {
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <span className="text-xs text-slate-400 italic">Sin cálculo</span>
-                      )}
-                    </td>
                     <td className="p-4 text-right">
                       <div className="inline-flex items-center gap-1.5">
+                        <button
+                          onClick={() => openReconfigureModal(strat)}
+                          title="Reconfigurar hiperparámetros (Crea nueva versión)"
+                          className="p-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-subtle transition-all"
+                        >
+                          <Edit3 className="w-3.5 h-3.5 text-tech-blue" />
+                        </button>
+
                         <button
                           onClick={() => handleToggleActive(strat.id)}
                           title={strat.is_active ? "Pausar bot" : "Activar bot"}
@@ -646,15 +619,6 @@ export default function AdminStrategiesPage() {
                         >
                           <Power className="w-3.5 h-3.5 inline mr-1" />
                           {strat.is_active ? "Pausar" : "Activar"}
-                        </button>
-
-                        <button
-                          onClick={() => openReconfigureModal(strat)}
-                          title="Reconfigurar hiperparámetros (Crea nueva versión)"
-                          className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-navy font-bold text-xs rounded-lg border border-slate-subtle transition-all flex items-center gap-1"
-                        >
-                          <Edit3 className="w-3.5 h-3.5 text-tech-blue" />
-                          <span>Reconfigurar</span>
                         </button>
 
                         <button
