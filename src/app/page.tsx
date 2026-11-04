@@ -66,6 +66,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [positions, setPositions] = useState<any[]>([]);
   const [positionsSummary, setPositionsSummary] = useState<any | null>(null);
+  const [cashSweep, setCashSweep] = useState<any | null>(null);
   const [recentOrders, setRecentOrders] = useState<any[]>([]);
   const [contributions, setContributions] = useState<any[]>([]);
   const [contribTotal, setContribTotal] = useState(0);
@@ -150,10 +151,13 @@ export default function DashboardPage() {
       const posData = await fetchApi(`/portfolios/${portId}/positions/`).catch(() => null);
       setPositions(posData?.positions || []);
       setPositionsSummary(posData?.summary || null);
+      const sweepData = await fetchApi(`/portfolios/${portId}/cash-sweep/`).catch(() => null);
+      setCashSweep(sweepData);
       await Promise.all([loadOrders(portId, 1), loadContributions(portId, 1)]);
     } catch (e) {
       setPositions([]);
       setPositionsSummary(null);
+      setCashSweep(null);
       setRecentOrders([]);
       setContributions([]);
     }
@@ -790,6 +794,40 @@ export default function DashboardPage() {
               {/* Tab 1: Positions Table */}
               {activeTab === "positions" && (
                 <div className="space-y-4">
+                  {cashSweep?.enabled && (
+                    <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 text-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-navy">Cash sweep ({cashSweep.symbol})</span>
+                        <span className="text-[10px] text-slate-muted">
+                          Efectivo libre invertido en letras del Tesoro{cashSweep.since ? ` · desde ${cashSweep.since}` : ""}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                        {[
+                          { label: "Saldo actual", value: fmtUsd(cashSweep.current_balance) },
+                          { label: "Saldo promedio", value: fmtUsd(cashSweep.average_balance) },
+                          {
+                            label: "Rendimiento acumulado",
+                            value: fmtUsd(cashSweep.cumulative_pnl_usd),
+                            tone: cashSweep.cumulative_pnl_usd >= 0 ? "text-emerald-700" : "text-red-700",
+                          },
+                          {
+                            label: "Rendimiento anualizado",
+                            value: cashSweep.annualized_return_pct != null ? `${Number(cashSweep.annualized_return_pct).toFixed(2)}%` : "—",
+                          },
+                          {
+                            label: "Contribución al portafolio",
+                            value: cashSweep.contribution_bps != null ? `${Number(cashSweep.contribution_bps).toFixed(1)} pb` : "—",
+                          },
+                        ].map((k: any) => (
+                          <div key={k.label} className="bg-white rounded-lg p-2.5 border border-sky-100">
+                            <div className="text-[10px] uppercase tracking-wider font-bold text-slate-muted">{k.label}</div>
+                            <div className={`font-bold font-mono mt-0.5 ${k.tone || "text-navy"}`}>{k.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {positionsSummary && positions.length > 0 && (
                     <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
                       {[
@@ -841,7 +879,9 @@ export default function DashboardPage() {
                             return (
                               <tr key={idx} className="hover:bg-slate-50 transition-colors">
                                 <td className="p-3 font-bold text-navy">{p.instrument}</td>
-                                <td className="p-3 text-slate-muted">{p.strategy}</td>
+                                <td className="p-3 text-slate-muted">
+                                  {p.is_cash_sweep ? <span className="font-bold text-sky-700">Cash sweep ({p.instrument})</span> : p.strategy}
+                                </td>
                                 <td className="p-3 font-mono font-semibold text-right">{Number(p.qty).toLocaleString("en-US", { maximumFractionDigits: 4 })}</td>
                                 <td className="p-3 font-mono text-slate-muted text-right">{fmtUsd(p.avg_cost)}</td>
                                 <td

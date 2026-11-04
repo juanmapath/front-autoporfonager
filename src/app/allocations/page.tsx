@@ -52,6 +52,19 @@ function AllocationsContent() {
   const [rebalTol, setRebalTol] = useState<number>(0.1);
   const [rebalMode, setRebalMode] = useState<string>("relative");
 
+  // Cash sweep (T-bills) state
+  const [sweepEnabled, setSweepEnabled] = useState<boolean>(false);
+  const [sweepSymbol, setSweepSymbol] = useState<string>("SGOV");
+  const [sweepBufferPct, setSweepBufferPct] = useState<number>(2); // %
+  const [sweepMinUsd, setSweepMinUsd] = useState<number>(500);
+
+  const loadSweepConfig = (p: any) => {
+    setSweepEnabled(Boolean(p?.cash_sweep_enabled));
+    setSweepSymbol(p?.cash_sweep_symbol || "SGOV");
+    setSweepBufferPct(Math.round(parseFloat(p?.cash_sweep_buffer_pct ?? "0.02") * 10000) / 100);
+    setSweepMinUsd(parseFloat(p?.cash_sweep_min_trade_usd ?? "500") || 500);
+  };
+
   useEffect(() => {
     if (isAuthenticated) {
       loadData();
@@ -76,6 +89,7 @@ function AllocationsContent() {
         setRebalFreq(targetPort.rebalance_frequency || "daily");
         setRebalTol(parseFloat(targetPort.rebalance_tolerance) || 0.1);
         setRebalMode(targetPort.rebalance_tolerance_mode || "relative");
+        loadSweepConfig(targetPort);
         initializeSelections(targetPort, strats);
         loadDrift(targetPort.id);
       }
@@ -127,6 +141,7 @@ function AllocationsContent() {
       setRebalFreq(p.rebalance_frequency || "daily");
       setRebalTol(parseFloat(p.rebalance_tolerance) || 0.1);
       setRebalMode(p.rebalance_tolerance_mode || "relative");
+      loadSweepConfig(p);
       initializeSelections(p, strategies);
     }
     setPreview(null);
@@ -213,6 +228,10 @@ function AllocationsContent() {
           rebalance_frequency: rebalFreq,
           rebalance_tolerance: rebalTol,
           rebalance_tolerance_mode: rebalMode,
+          cash_sweep_enabled: sweepEnabled,
+          cash_sweep_symbol: sweepSymbol,
+          cash_sweep_buffer_pct: Number((sweepBufferPct / 100).toFixed(4)),
+          cash_sweep_min_trade_usd: sweepMinUsd,
         }),
       });
 
@@ -538,6 +557,72 @@ function AllocationsContent() {
                 </p>
               </div>
             </div>
+          </div>
+
+          {/* Cash sweep: efectivo libre en T-bills */}
+          <div className="bg-white border border-slate-subtle p-6 rounded-2xl shadow-card-subtle space-y-4">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={sweepEnabled}
+                onChange={(e) => setSweepEnabled(e.target.checked)}
+                className="w-4 h-4 mt-0.5 rounded text-tech-blue focus:ring-tech-blue"
+              />
+              <div>
+                <span className="font-heading font-bold text-sm text-navy block">Invertir efectivo libre en T-bills</span>
+                <span className="text-[11px] text-slate-muted block">
+                  El efectivo que ningún bot está usando se invierte en un ETF de letras del Tesoro. Se vende automáticamente cuando un bot lo necesita.
+                </span>
+              </div>
+            </label>
+
+            {sweepEnabled && (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[11px] text-navy font-bold block mb-1">ETF</label>
+                    <select
+                      value={sweepSymbol}
+                      onChange={(e) => setSweepSymbol(e.target.value)}
+                      className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-bold focus:outline-none focus:border-tech-blue"
+                    >
+                      <option value="SGOV">SGOV · letras 0–3 meses (por defecto)</option>
+                      <option value="BIL">BIL · letras 1–3 meses</option>
+                      <option value="USFR">USFR · bonos de tasa flotante</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-navy font-bold block mb-1">Colchón de caja (%)</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      max="20"
+                      value={sweepBufferPct}
+                      onChange={(e) => setSweepBufferPct(parseFloat(e.target.value) || 0)}
+                      className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-navy font-bold block mb-1">Mínimo por operación (USD)</label>
+                    <input
+                      type="number"
+                      step="50"
+                      min="0"
+                      value={sweepMinUsd}
+                      onChange={(e) => setSweepMinUsd(parseFloat(e.target.value) || 0)}
+                      className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
+                    />
+                  </div>
+                </div>
+                <div className="text-[11px] text-slate-muted leading-relaxed bg-slate-50 border border-slate-subtle rounded-xl p-3 space-y-1">
+                  <p><strong className="text-navy">Riesgos:</strong> el precio sube con el interés y cae cada mes el día ex-dividendo (no es pérdida: el dinero llega como dividendo); el rendimiento se mide como precio + dividendos.</p>
+                  <p>Riesgo de tasas bajo (duración ~0.1 años) y de crédito del gobierno de EE. UU.; costes de ~0.09% anual y un pequeño diferencial al comprar/vender.</p>
+                  <p>Cuentas de no residente (W-8BEN): los dividendos pueden sufrir retención del 30% si el broker no aplica la exención de interés. Verifícalo con los primeros pagos.</p>
+                  <p>Al desactivarlo, el sweep se liquida en la siguiente corrida.</p>
+                </div>
+              </>
+            )}
           </div>
 
           {driftData?.allocations?.length > 0 && (
