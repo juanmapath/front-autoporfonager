@@ -21,6 +21,18 @@ import {
 } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 
+// Valores recomendados de rebalanceo por tipo de bot (sugerencia, no se fuerzan)
+const REBALANCE_HINTS: Record<string, string> = {
+  ranked_allocation:
+    "mensual con tolerancia relativa 15–25% (activos volátiles / momentum); trimestral post-reportes 25% para buy & hold por fundamentales.",
+  hold: "nunca (un solo activo: la posición cambia solo por señal o por el rebalanceo entre bots).",
+  one_strategy: "nunca si opera un solo activo; el apalancamiento se fija en la entrada.",
+  multi_strategy: "nunca si opera un solo activo; mensual con tolerancia relativa 20% si es multi-activo.",
+  cross_asset: "nunca si opera un solo activo.",
+  smart_accumulator: "no aplica: acumula en cada señal de compra.",
+  default: "heredar del portafolio.",
+};
+
 export default function AdminStrategiesPage() {
   const [strategies, setStrategies] = useState<any[]>([]);
   const [botTypes, setBotTypes] = useState<Record<string, any>>({});
@@ -54,7 +66,10 @@ export default function AdminStrategiesPage() {
   const [rankedExecMode, setRankedExecMode] = useState<"hold" | "strategy">("hold");
   const [rankedSubStrategy, setRankedSubStrategy] = useState<string>("");
   const [rankedSubParams, setRankedSubParams] = useState<Record<string, number>>({});
-  const [rebalanceFreq, setRebalanceFreq] = useState<string>("monthly");
+  // Rebalanceo del bot (nivel 2): "inherit" = hereda el del portafolio
+  const [rebalanceFreq, setRebalanceFreq] = useState<string>("inherit");
+  const [rebalanceTolPct, setRebalanceTolPct] = useState<string>(""); // % ; vacío = heredar
+  const [rebalanceMode, setRebalanceMode] = useState<string>("inherit");
 
   // Hold & Smart Accumulator state
   const [isCashReserve, setIsCashReserve] = useState<boolean>(false);
@@ -127,6 +142,9 @@ export default function AdminStrategiesPage() {
     setLeverage(1.0);
     setMaxLeverage(1.0);
     setUseRegimes(false);
+    setRebalanceFreq("inherit");
+    setRebalanceTolPct("");
+    setRebalanceMode("inherit");
 
     const stratKeys = buildableKeys();
     if (stratKeys.length > 0) {
@@ -164,6 +182,13 @@ export default function AdminStrategiesPage() {
     setLeverage(params.leverage || 1.0);
     setMaxLeverage(params.max_leverage || 1.0);
     setUseRegimes(params.use_regimes || false);
+    setRebalanceFreq(params.rebalance_frequency || "inherit");
+    setRebalanceTolPct(
+      params.rebalance_tolerance !== undefined && params.rebalance_tolerance !== null
+        ? String(Math.round(Number(params.rebalance_tolerance) * 10000) / 100)
+        : ""
+    );
+    setRebalanceMode(params.rebalance_tolerance_mode || "inherit");
 
     // Populate Ranked Allocation state if applicable
     if (strat.kind === "ranked_allocation") {
@@ -173,7 +198,6 @@ export default function AdminStrategiesPage() {
       if (params.rank_weights && params.rank_weights.length > 0) {
         setRankWeights(params.rank_weights.map((w: number) => Math.round(w * 100)));
       }
-      if (params.rebalance_frequency) setRebalanceFreq(params.rebalance_frequency);
 
       const exec = params.execution || {};
       setRankedExecMode(exec.mode || "hold");
@@ -335,6 +359,9 @@ export default function AdminStrategiesPage() {
       leverage: leverage,
       max_leverage: maxLeverage,
       use_regimes: useRegimes,
+      rebalance_frequency: rebalanceFreq === "inherit" ? null : rebalanceFreq,
+      rebalance_tolerance: rebalanceTolPct.trim() === "" ? null : Number((parseFloat(rebalanceTolPct) / 100).toFixed(4)),
+      rebalance_tolerance_mode: rebalanceMode === "inherit" ? null : rebalanceMode,
     };
 
     if (botType === "ranked_allocation") {
@@ -367,7 +394,6 @@ export default function AdminStrategiesPage() {
       payload.traded_symbols = symbolsClean;
       payload.metrics = selectedMetrics;
       payload.rank_weights = rankWeights.map((w) => Number((w / 100).toFixed(4)));
-      payload.rebalance_frequency = rebalanceFreq;
       payload.execution = {
         mode: rankedExecMode,
         strategy_name: rankedExecMode === "strategy" ? rankedSubStrategy : null,
@@ -1354,6 +1380,62 @@ export default function AdminStrategiesPage() {
                   )}
                 </>
               )}
+
+                {/* Rebalanceo del bot (nivel 2: capital entre los activos del bot) */}
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-subtle space-y-3">
+                  <div>
+                    <span className="text-xs font-bold text-navy block">Rebalanceo del bot</span>
+                    <span className="text-[10px] text-slate-muted block">
+                      Cada cuánto se redimensionan los activos del bot dentro de su capital. Las entradas y salidas por señal se ejecutan siempre.
+                      {botType === "ranked_allocation" && " En bots de ranking también define cuándo se recalcula el ranking."}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-[11px] text-navy font-bold block mb-1">Frecuencia</label>
+                      <select
+                        value={rebalanceFreq}
+                        onChange={(e) => setRebalanceFreq(e.target.value)}
+                        className="w-full bg-white border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-bold focus:outline-none focus:border-tech-blue"
+                      >
+                        <option value="inherit">Heredar del portafolio</option>
+                        <option value="daily">Diaria</option>
+                        <option value="weekly">Semanal</option>
+                        <option value="monthly">Mensual</option>
+                        <option value="quarterly">Trimestral</option>
+                        <option value="quarterly_earnings">Trimestral post-reportes (feb/may/ago/nov)</option>
+                        <option value="never">Nunca (solo por señal)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-navy font-bold block mb-1">Tolerancia (%)</label>
+                      <input
+                        type="number"
+                        step="1"
+                        min="0"
+                        placeholder="Heredar"
+                        value={rebalanceTolPct}
+                        onChange={(e) => setRebalanceTolPct(e.target.value)}
+                        className="w-full bg-white border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-navy font-bold block mb-1">Modo de desviación</label>
+                      <select
+                        value={rebalanceMode}
+                        onChange={(e) => setRebalanceMode(e.target.value)}
+                        className="w-full bg-white border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-bold focus:outline-none focus:border-tech-blue"
+                      >
+                        <option value="inherit">Heredar del portafolio</option>
+                        <option value="relative">Relativa (% de la meta de cada activo)</option>
+                        <option value="absolute">Absoluta (puntos del portafolio)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-slate-muted">
+                    Recomendado: {REBALANCE_HINTS[botType] || REBALANCE_HINTS.default}
+                  </p>
+                </div>
 
                 {/* Leverage & Macro Settings */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">

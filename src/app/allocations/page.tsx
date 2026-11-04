@@ -50,6 +50,7 @@ function AllocationsContent() {
   // Rebalance policy state
   const [rebalFreq, setRebalFreq] = useState<string>("daily");
   const [rebalTol, setRebalTol] = useState<number>(0.1);
+  const [rebalMode, setRebalMode] = useState<string>("relative");
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -74,6 +75,7 @@ function AllocationsContent() {
         setCurrentPortfolio(targetPort);
         setRebalFreq(targetPort.rebalance_frequency || "daily");
         setRebalTol(parseFloat(targetPort.rebalance_tolerance) || 0.1);
+        setRebalMode(targetPort.rebalance_tolerance_mode || "relative");
         initializeSelections(targetPort, strats);
         loadDrift(targetPort.id);
       }
@@ -124,6 +126,7 @@ function AllocationsContent() {
       setCurrentPortfolio(p);
       setRebalFreq(p.rebalance_frequency || "daily");
       setRebalTol(parseFloat(p.rebalance_tolerance) || 0.1);
+      setRebalMode(p.rebalance_tolerance_mode || "relative");
       initializeSelections(p, strategies);
     }
     setPreview(null);
@@ -209,6 +212,7 @@ function AllocationsContent() {
         body: JSON.stringify({
           rebalance_frequency: rebalFreq,
           rebalance_tolerance: rebalTol,
+          rebalance_tolerance_mode: rebalMode,
         }),
       });
 
@@ -330,7 +334,7 @@ function AllocationsContent() {
 
         {driftData && (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-muted font-medium">Tolerancia Portafolio:</span>
+            <span className="text-xs text-slate-muted font-medium">Desviación entre bots:</span>
             <span
               className={`text-xs px-3 py-1 rounded-full font-bold border flex items-center gap-1.5 ${
                 driftData.rebalance_needed
@@ -468,7 +472,7 @@ function AllocationsContent() {
               <div className="flex items-center gap-2">
                 <Scale className="w-5 h-5 text-tech-blue" />
                 <h2 className="font-heading font-bold text-base text-navy">
-                  Política de Rebalanceo del Portafolio
+                  Rebalanceo entre bots
                 </h2>
               </div>
               <button
@@ -482,7 +486,7 @@ function AllocationsContent() {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className="text-xs text-navy font-bold block mb-1">Frecuencia Periódica</label>
+                <label className="text-xs text-navy font-bold block mb-1">Frecuencia del rebalanceo entre bots</label>
                 <select
                   value={rebalFreq}
                   onChange={(e) => setRebalFreq(e.target.value)}
@@ -492,13 +496,14 @@ function AllocationsContent() {
                   <option value="weekly">Semanal (Último día hábil)</option>
                   <option value="monthly">Mensual (Último día hábil del mes)</option>
                   <option value="quarterly">Trimestral (Último día hábil trimestral)</option>
+                  <option value="quarterly_earnings">Trimestral post-reportes (feb/may/ago/nov)</option>
                   <option value="never">Solo por cambio de señal</option>
                 </select>
               </div>
 
               <div>
                 <label className="text-xs text-navy font-bold block mb-1">
-                  Tolerancia Máxima de Drift (±%)
+                  Desviación permitida entre bots
                 </label>
                 <div className="flex items-center gap-2">
                   <input
@@ -514,6 +519,14 @@ function AllocationsContent() {
                     ±{(rebalTol * 100).toFixed(0)}%
                   </span>
                 </div>
+                <select
+                  value={rebalMode}
+                  onChange={(e) => setRebalMode(e.target.value)}
+                  className="w-full mt-2 bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-2 text-[11px] font-semibold focus:outline-none focus:border-tech-blue"
+                >
+                  <option value="absolute">Absoluta: puntos de peso (recomendado 5%)</option>
+                  <option value="relative">Relativa: % del peso objetivo del bot</option>
+                </select>
               </div>
 
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-subtle text-xs text-slate-muted flex flex-col justify-center">
@@ -521,11 +534,44 @@ function AllocationsContent() {
                   Criterio de Tolerancia
                 </span>
                 <p className="text-[11px] leading-relaxed">
-                  Las entradas y salidas por señal se ejecutan cada día. En la fecha de rebalanceo, las posiciones abiertas que se desvíen más de ±{(rebalTol * 100).toFixed(0)}% de su meta se reajustan.
+                  Cada bot conserva sus ganancias y pérdidas entre fechas. En la fecha de rebalanceo, si algún bot se desvía más de ±{(rebalTol * 100).toFixed(0)}% ({rebalMode === "absolute" ? "puntos de peso" : "de su peso objetivo"}), se reajusta el capital de todos a su peso objetivo. Un cambio de pesos reajusta de inmediato. Cada bot decide además su propio rebalanceo de activos (ver configuración del bot).
                 </p>
               </div>
             </div>
           </div>
+
+          {driftData?.allocations?.length > 0 && (
+            <div className="bg-white border border-slate-subtle p-6 rounded-2xl shadow-card-subtle space-y-3">
+              <h3 className="font-heading font-bold text-sm text-navy">Capital por bot (manga)</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-left text-slate-muted border-b border-slate-subtle">
+                      <th className="py-2 pr-3 font-bold">Bot</th>
+                      <th className="py-2 pr-3 font-bold text-right">Valor de manga</th>
+                      <th className="py-2 pr-3 font-bold text-right">Peso real</th>
+                      <th className="py-2 pr-3 font-bold text-right">Peso objetivo</th>
+                      <th className="py-2 font-bold text-right">Desviación</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {driftData.allocations.map((a: any) => (
+                      <tr key={a.allocation_id} className="border-b border-slate-100">
+                        <td className="py-2 pr-3 font-bold text-navy">{a.strategy_name}</td>
+                        <td className="py-2 pr-3 text-right font-mono">${Number(a.sleeve_value ?? a.current_value).toLocaleString("en-US", { maximumFractionDigits: 0 })}</td>
+                        <td className="py-2 pr-3 text-right font-mono">{(a.current_weight * 100).toFixed(1)}%</td>
+                        <td className="py-2 pr-3 text-right font-mono">{(a.target_weight * 100).toFixed(1)}%</td>
+                        <td className={`py-2 text-right font-mono font-bold ${a.breached ? "text-amber-700" : "text-emerald-700"}`}>
+                          {((a.current_weight - a.target_weight) * 100).toFixed(1)} pts
+                          {a.breached ? " ⚠" : ""}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Sliders Editor for Selected Bots Only */}
