@@ -1580,15 +1580,13 @@ export default function DashboardPage() {
                   </div>
                   <div className="bg-slate-canvas rounded-xl p-3 border border-slate-subtle">
                     <div className="text-[10px] uppercase tracking-wider font-bold text-slate-muted">Política de apalancamiento</div>
-                    <div className={`font-bold mt-0.5 ${detailPolicy?.type && detailPolicy.type !== "fixed" ? "text-emerald-700" : "text-slate-600"}`}>
-                      {detailPolicy?.type === "regime_pf" ? "PF por régimen" : detailPolicy?.type === "global_pf" ? "PF global" : "Fijo"}
+                    <div className={`font-bold mt-0.5 ${detailPolicy?.type === "regime_pf" ? "text-emerald-700" : "text-slate-600"}`}>
+                      {detailPolicy?.type === "regime_pf" ? "PF por régimen" : "Fijo"}
                     </div>
                     <div className="text-slate-muted mt-0.5">
                       {detailPolicy?.type === "regime_pf"
-                        ? "PF de los trades del régimen actual (encogido hacia el PF global)"
-                        : detailPolicy?.type === "global_pf"
-                          ? "Según el Profit Factor de todos los trades cerrados"
-                          : "Apalancamiento fijo"}
+                        ? "Según el PF de los trades pasados que entraron en el régimen de hoy"
+                        : "Apalancamiento fijo"}
                     </div>
                   </div>
                   {detailPolicy?.type === "regime_pf" && (
@@ -1603,9 +1601,10 @@ export default function DashboardPage() {
                       {detailRegimeInfo ? (
                         <div className="text-slate-muted mt-0.5">
                           PF del régimen: <span className="font-mono font-bold text-navy">{detailRegimeInfo.pf_regime != null ? Number(detailRegimeInfo.pf_regime).toFixed(2) : "–"}</span>
-                          {" · "}trades: <span className="font-mono font-bold text-navy">{detailRegimeInfo.n_trades_regime ?? 0}</span>
-                          {" · "}PF global: <span className="font-mono font-bold text-navy">{detailRegimeInfo.pf_global != null ? Number(detailRegimeInfo.pf_global).toFixed(2) : "–"}</span>
-                          {" · "}PF encogido: <span className="font-mono font-bold text-navy">{detailRegimeInfo.pf_shrunk != null ? Number(detailRegimeInfo.pf_shrunk).toFixed(2) : "–"}</span>
+                          {" · "}trades en este régimen: <span className="font-mono font-bold text-navy">{detailRegimeInfo.n_trades_regime ?? 0}</span>
+                          {detailRegimeInfo.source && detailRegimeInfo.source !== "regime_pf" && (
+                            <span className="block">Pocos trades en este régimen (o sin régimen): se usa el apalancamiento base.</span>
+                          )}
                         </div>
                       ) : (
                         <div className="text-slate-muted mt-0.5">El PF del régimen se muestra cuando el bot tiene una posición abierta.</div>
