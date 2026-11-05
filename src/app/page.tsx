@@ -415,6 +415,22 @@ export default function DashboardPage() {
   const detailTraded = (detailLive?.instruments || []).filter((i: any) => i.role === "traded");
   const detailSignalSource = (detailLive?.instruments || []).filter((i: any) => i.role === "signal_source");
   const detailCurrentSignals: any[] = detailStrat?.current_signals || [];
+  const detailPolicy: any = detailStrat?.leverage_policy;
+  const detailRegime: any = detailStrat?.current_regime;
+  // Diagnostico del apalancamiento fijado en la entrada (solo con posicion abierta)
+  const detailRegimeInfo: any = (() => {
+    for (const sig of detailCurrentSignals) {
+      const lev = sig?.diagnostics?.leverage;
+      const direct = lev?.providers?.macro;
+      if (direct) return direct;
+      if (lev && typeof lev === "object") {
+        for (const v of Object.values<any>(lev)) {
+          if (v?.providers?.macro) return v.providers.macro;
+        }
+      }
+    }
+    return null;
+  })();
   const detailRawConfigs: any[] = detailParams.strategies?.length
     ? detailParams.strategies
     : detailParams.execution?.mode === "strategy"
@@ -1563,14 +1579,38 @@ export default function DashboardPage() {
                     <div className="text-slate-muted mt-0.5">Base: {detailParams.leverage ?? 1}x</div>
                   </div>
                   <div className="bg-slate-canvas rounded-xl p-3 border border-slate-subtle">
-                    <div className="text-[10px] uppercase tracking-wider font-bold text-slate-muted">Operación con regímenes</div>
-                    <div className={`font-bold mt-0.5 ${detailParams.use_regimes ? "text-emerald-700" : "text-slate-600"}`}>
-                      {detailParams.use_regimes ? "ACTIVA" : "INACTIVA"}
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-slate-muted">Política de apalancamiento</div>
+                    <div className={`font-bold mt-0.5 ${detailPolicy?.type === "regime_pf" ? "text-emerald-700" : "text-slate-600"}`}>
+                      {detailPolicy?.type === "regime_pf" ? "PF por régimen" : "Fijo"}
                     </div>
                     <div className="text-slate-muted mt-0.5">
-                      {detailParams.use_regimes ? "Apalancamiento dinámico según Profit Factor" : "Apalancamiento fijo"}
+                      {detailPolicy?.type === "regime_pf"
+                        ? "Según el PF de los trades pasados que entraron en el régimen de hoy"
+                        : "Apalancamiento fijo"}
                     </div>
                   </div>
+                  {detailPolicy?.type === "regime_pf" && (
+                    <div className="bg-slate-canvas rounded-xl p-3 border border-slate-subtle col-span-2">
+                      <div className="text-[10px] uppercase tracking-wider font-bold text-slate-muted">Régimen actual (macro)</div>
+                      <div className="font-bold font-mono text-navy mt-0.5">
+                        {detailRegime?.macro?.label || "Sin datos todavía"}
+                        {detailRegime?.macro?.date && (
+                          <span className="font-sans font-normal text-slate-muted"> · {detailRegime.macro.date}</span>
+                        )}
+                      </div>
+                      {detailRegimeInfo ? (
+                        <div className="text-slate-muted mt-0.5">
+                          PF del régimen: <span className="font-mono font-bold text-navy">{detailRegimeInfo.pf_regime != null ? Number(detailRegimeInfo.pf_regime).toFixed(2) : "–"}</span>
+                          {" · "}trades en este régimen: <span className="font-mono font-bold text-navy">{detailRegimeInfo.n_trades_regime ?? 0}</span>
+                          {detailRegimeInfo.source && detailRegimeInfo.source !== "regime_pf" && (
+                            <span className="block">Pocos trades en este régimen (o sin régimen): se usa el apalancamiento base.</span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-slate-muted mt-0.5">El PF del régimen se muestra cuando el bot tiene una posición abierta.</div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </section>
 

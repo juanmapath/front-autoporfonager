@@ -51,6 +51,11 @@ export default function AdminStrategiesPage() {
   const [leverage, setLeverage] = useState<number>(1.0);
   const [maxLeverage, setMaxLeverage] = useState<number>(1.0);
   const [useRegimes, setUseRegimes] = useState<boolean>(false);
+  // Politica de apalancamiento: fixed | regime_pf (use_regimes=true equivale a regime_pf)
+  const [levPolicy, setLevPolicy] = useState<"fixed" | "regime_pf">("fixed");
+  const [levProvider, setLevProvider] = useState<string>("macro");
+  const [levMinTrades, setLevMinTrades] = useState<string>("3");
+  const [levLookback, setLevLookback] = useState<string>("15");
   const [selectedStrats, setSelectedStrats] = useState<
     Array<{ strategy_name: string; params: Record<string, number> }>
   >([]);
@@ -182,6 +187,11 @@ export default function AdminStrategiesPage() {
     setLeverage(params.leverage || 1.0);
     setMaxLeverage(params.max_leverage || 1.0);
     setUseRegimes(params.use_regimes || false);
+    const lp = params.leverage_policy;
+    setLevPolicy(lp?.type === "regime_pf" || (!lp?.type && params.use_regimes) ? "regime_pf" : "fixed");
+    setLevProvider((lp?.providers && lp.providers[0]) || "macro");
+    setLevMinTrades(String(lp?.min_trades ?? 3));
+    setLevLookback(String(lp?.lookback_years ?? 15));
     setRebalanceFreq(params.rebalance_frequency || "inherit");
     setRebalanceTolPct(
       params.rebalance_tolerance !== undefined && params.rebalance_tolerance !== null
@@ -358,7 +368,17 @@ export default function AdminStrategiesPage() {
       decision_offset_minutes: 25,
       leverage: leverage,
       max_leverage: maxLeverage,
-      use_regimes: useRegimes,
+      use_regimes: levPolicy !== "fixed",
+      leverage_policy:
+        levPolicy === "regime_pf"
+          ? {
+              type: "regime_pf",
+              providers: [levProvider],
+              combine: "min",
+              min_trades: Math.max(1, parseInt(levMinTrades) || 3),
+              lookback_years: Math.max(1, parseFloat(levLookback) || 15),
+            }
+          : null,
       rebalance_frequency: rebalanceFreq === "inherit" ? null : rebalanceFreq,
       rebalance_tolerance: rebalanceTolPct.trim() === "" ? null : Number((parseFloat(rebalanceTolPct) / 100).toFixed(4)),
       rebalance_tolerance_mode: rebalanceMode === "inherit" ? null : rebalanceMode,
@@ -1463,18 +1483,69 @@ export default function AdminStrategiesPage() {
                       className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
                     />
                   </div>
-                  <div className="flex items-center pt-5">
-                    <label className="inline-flex items-center gap-2 cursor-pointer text-xs font-bold text-navy">
-                      <input
-                        type="checkbox"
-                        checked={useRegimes}
-                        onChange={(e) => setUseRegimes(e.target.checked)}
-                        className="rounded text-tech-blue focus:ring-tech-blue"
-                      />
-                      Apalancamiento Dinámico (Régimen)
-                    </label>
+                  <div>
+                    <label className="text-[11px] text-navy font-bold block mb-1">Política de apalancamiento</label>
+                    <select
+                      value={levPolicy}
+                      onChange={(e) => {
+                        const v = e.target.value as "fixed" | "regime_pf";
+                        setLevPolicy(v);
+                        setUseRegimes(v !== "fixed");
+                      }}
+                      className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-bold focus:outline-none focus:border-tech-blue"
+                    >
+                      <option value="fixed">Fijo (apalancamiento base)</option>
+                      <option value="regime_pf">PF por régimen</option>
+                    </select>
                   </div>
                 </div>
+                <p className="text-[11px] text-slate-muted mt-2">
+                  {levPolicy === "fixed" && "Siempre el apalancamiento base."}
+                  {levPolicy === "regime_pf" && "Mira el Profit Factor de los trades pasados que entraron en el mismo régimen de mercado que hoy: PF ≥ 2.5 apalanca al máximo, PF ≥ 1.5 a mitad de camino y menos que eso al base. Con pocos trades en el régimen usa el base. Se fija en la entrada."}
+                </p>
+                {levPolicy === "regime_pf" && (
+                  <div className="mt-3 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] text-navy font-bold block mb-1">Proveedor de régimen</label>
+                        <select
+                          value={levProvider}
+                          onChange={(e) => setLevProvider(e.target.value)}
+                          className="w-full bg-slate-canvas border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-bold focus:outline-none focus:border-tech-blue"
+                        >
+                          <option value="macro">Macro (crédito, dólar, VIX)</option>
+                          <option value="vol" disabled>Volatilidad (próximamente)</option>
+                          <option value="trend" disabled>Tendencia (próximamente)</option>
+                          <option value="hmm" disabled>HMM (próximamente)</option>
+                        </select>
+                      </div>
+                    </div>
+                    <details className="bg-slate-canvas rounded-xl border border-slate-subtle p-3">
+                      <summary className="text-[11px] font-bold text-navy cursor-pointer">Avanzado</summary>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                        <div>
+                          <label className="text-[11px] text-navy font-bold block mb-1">Mín. trades por régimen</label>
+                          <input
+                            type="number" min="1" step="1" value={levMinTrades}
+                            onChange={(e) => setLevMinTrades(e.target.value)}
+                            className="w-full bg-white border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-navy font-bold block mb-1">Ventana (años)</label>
+                          <input
+                            type="number" min="1" step="1" value={levLookback}
+                            onChange={(e) => setLevLookback(e.target.value)}
+                            className="w-full bg-white border border-slate-subtle text-navy rounded-xl p-2.5 text-xs font-mono font-bold focus:outline-none focus:border-tech-blue"
+                          />
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-muted mt-2">
+                        Con menos trades que el mínimo en el régimen actual se usa el apalancamiento base.
+                      </p>
+                    </details>
+                  </div>
+                )}
               </div>
 
               {/* Fixed Footer Actions */}
