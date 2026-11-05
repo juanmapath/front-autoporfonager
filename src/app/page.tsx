@@ -60,11 +60,10 @@ const fmtUsd = (v: number | string | null | undefined) =>
   `$${Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const POLICY_LABELS: Record<string, string> = {
-  fixed: "Fijo", global_pf: "PF global", regime_pf: "PF por régimen", layered: "Capas combinables",
+  fixed: "Fijo", regime_pf: "PF por régimen", layered: "Capas combinables",
 };
 const POLICY_HINTS: Record<string, string> = {
   fixed: "Apalancamiento fijo",
-  global_pf: "Según el Profit Factor de todos los trades cerrados",
   regime_pf: "Según el PF de los trades pasados que entraron en el régimen de hoy",
   layered: "Escaladores × etiquetas, limitados por topes; se recalcula a diario",
 };

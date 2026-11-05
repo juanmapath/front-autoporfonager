@@ -53,7 +53,7 @@ export default function AdminStrategiesPage() {
   const [maxLeverage, setMaxLeverage] = useState<number>(1.0);
   const [useRegimes, setUseRegimes] = useState<boolean>(false);
   // Táctica de apalancamiento (leverage_policy); las opciones vienen del catálogo del back
-  const [levPolicyObj, setLevPolicyObj] = useState<any>({ type: "fixed" });
+  const [levPolicyObj, setLevPolicyObj] = useState<any>({ type: "regime_pf" }); // por defecto: PF por régimen macro
   const [leverageCatalog, setLeverageCatalog] = useState<LeverageCatalog | null>(null);
   const [selectedStrats, setSelectedStrats] = useState<
     Array<{ strategy_name: string; params: Record<string, number> }>
@@ -146,7 +146,8 @@ export default function AdminStrategiesPage() {
     setSignalSymbol("TLT");
     setLeverage(1.0);
     setMaxLeverage(1.0);
-    setUseRegimes(false);
+    setUseRegimes(true);
+    setLevPolicyObj({ type: "regime_pf" });
     setRebalanceFreq("inherit");
     setRebalanceTolPct("");
     setRebalanceMode("inherit");
