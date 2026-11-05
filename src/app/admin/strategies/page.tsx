@@ -54,7 +54,7 @@ export default function AdminStrategiesPage() {
   // Politica de apalancamiento: fixed | regime_pf (use_regimes=true equivale a regime_pf)
   const [levPolicy, setLevPolicy] = useState<"fixed" | "regime_pf">("fixed");
   const [levProvider, setLevProvider] = useState<string>("macro");
-  const [levMinTrades, setLevMinTrades] = useState<string>("8");
+  const [levMinTrades, setLevMinTrades] = useState<string>("3");
   const [levLookback, setLevLookback] = useState<string>("15");
   const [selectedStrats, setSelectedStrats] = useState<
     Array<{ strategy_name: string; params: Record<string, number> }>
@@ -190,7 +190,7 @@ export default function AdminStrategiesPage() {
     const lp = params.leverage_policy;
     setLevPolicy(lp?.type === "regime_pf" || (!lp?.type && params.use_regimes) ? "regime_pf" : "fixed");
     setLevProvider((lp?.providers && lp.providers[0]) || "macro");
-    setLevMinTrades(String(lp?.min_trades ?? 8));
+    setLevMinTrades(String(lp?.min_trades ?? 3));
     setLevLookback(String(lp?.lookback_years ?? 15));
     setRebalanceFreq(params.rebalance_frequency || "inherit");
     setRebalanceTolPct(
@@ -375,7 +375,7 @@ export default function AdminStrategiesPage() {
               type: "regime_pf",
               providers: [levProvider],
               combine: "min",
-              min_trades: Math.max(1, parseInt(levMinTrades) || 8),
+              min_trades: Math.max(1, parseInt(levMinTrades) || 3),
               lookback_years: Math.max(1, parseFloat(levLookback) || 15),
             }
           : null,
