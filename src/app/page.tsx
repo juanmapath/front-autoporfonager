@@ -59,6 +59,16 @@ function Pager({ page, total, onChange }: { page: number; total: number; onChang
 const fmtUsd = (v: number | string | null | undefined) =>
   `$${Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+const POLICY_LABELS: Record<string, string> = {
+  fixed: "Fijo", global_pf: "PF global", regime_pf: "PF por régimen", layered: "Capas combinables",
+};
+const POLICY_HINTS: Record<string, string> = {
+  fixed: "Apalancamiento fijo",
+  global_pf: "Según el Profit Factor de todos los trades cerrados",
+  regime_pf: "Según el PF de los trades pasados que entraron en el régimen de hoy",
+  layered: "Escaladores × etiquetas, limitados por topes; se recalcula a diario",
+};
+
 export default function DashboardPage() {
   const { user, isAuthenticated, loading: authLoading } = useAuth();
   const [portfolios, setPortfolios] = useState<any[]>([]);
@@ -417,6 +427,14 @@ export default function DashboardPage() {
   const detailCurrentSignals: any[] = detailStrat?.current_signals || [];
   const detailPolicy: any = detailStrat?.leverage_policy;
   const detailRegime: any = detailStrat?.current_regime;
+  // Diagnostico de la politica layered (solo con posicion abierta)
+  const detailLayerInfo: any = (() => {
+    for (const sig of detailCurrentSignals) {
+      const lev = sig?.diagnostics?.leverage;
+      if (lev?.leverage_policy === "layered") return lev;
+    }
+    return null;
+  })();
   // Diagnostico del apalancamiento fijado en la entrada (solo con posicion abierta)
   const detailRegimeInfo: any = (() => {
     for (const sig of detailCurrentSignals) {
@@ -1580,16 +1598,38 @@ export default function DashboardPage() {
                   </div>
                   <div className="bg-slate-canvas rounded-xl p-3 border border-slate-subtle">
                     <div className="text-[10px] uppercase tracking-wider font-bold text-slate-muted">Política de apalancamiento</div>
-                    <div className={`font-bold mt-0.5 ${detailPolicy?.type === "regime_pf" ? "text-emerald-700" : "text-slate-600"}`}>
-                      {detailPolicy?.type === "regime_pf" ? "PF por régimen" : "Fijo"}
+                    <div className={`font-bold mt-0.5 ${detailPolicy?.type && detailPolicy.type !== "fixed" ? "text-emerald-700" : "text-slate-600"}`}>
+                      {POLICY_LABELS[detailPolicy?.type || "fixed"] || detailPolicy?.type}
                     </div>
-                    <div className="text-slate-muted mt-0.5">
-                      {detailPolicy?.type === "regime_pf"
-                        ? "Según el PF de los trades pasados que entraron en el régimen de hoy"
-                        : "Apalancamiento fijo"}
-                    </div>
+                    <div className="text-slate-muted mt-0.5">{POLICY_HINTS[detailPolicy?.type || "fixed"] || ""}</div>
                   </div>
-                  {detailPolicy?.type === "regime_pf" && (
+                  {detailPolicy?.type === "layered" && (
+                    <div className="bg-slate-canvas rounded-xl p-3 border border-slate-subtle col-span-2">
+                      <div className="text-[10px] uppercase tracking-wider font-bold text-slate-muted">Capas activas</div>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {[...(detailPolicy.scalers || []), ...(detailPolicy.caps || []), ...(detailPolicy.label_policies || [])].map((l: any, i: number) => (
+                          <span key={i} className="text-[10px] font-mono px-1.5 py-0.5 bg-white border border-slate-subtle rounded text-slate-700">
+                            {l.key}
+                          </span>
+                        ))}
+                      </div>
+                      {detailLayerInfo ? (
+                        <div className="text-slate-muted mt-1.5 space-y-0.5">
+                          <div>
+                            Apalancamiento hoy: <span className="font-mono font-bold text-navy">{Number(detailLayerInfo.applied_leverage ?? detailLayerInfo.L ?? 1).toFixed(2)}x</span>
+                            {" · "}objetivo sin topes: <span className="font-mono font-bold text-navy">{Number(detailLayerInfo.L_raw ?? 0).toFixed(2)}x</span>
+                            {" · "}capa que limita: <span className="font-mono font-bold text-navy">{detailLayerInfo.active_layer}</span>
+                          </div>
+                          {Object.entries({ ...(detailLayerInfo.scalers || {}), ...(detailLayerInfo.caps || {}) }).map(([k, v]: any) => (
+                            <div key={k} className="font-mono text-[11px]">{k}: {Number(v).toFixed(2)}</div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-slate-muted mt-1">El detalle de capas se muestra cuando el bot tiene una posición abierta.</div>
+                      )}
+                    </div>
+                  )}
+                  {(detailPolicy?.type === "regime_pf" || detailRegime) && (
                     <div className="bg-slate-canvas rounded-xl p-3 border border-slate-subtle col-span-2">
                       <div className="text-[10px] uppercase tracking-wider font-bold text-slate-muted">Régimen actual (macro)</div>
                       <div className="font-bold font-mono text-navy mt-0.5">
